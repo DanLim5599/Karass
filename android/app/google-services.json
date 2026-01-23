@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "268042310073",
+    "project_id": "karass-b41bc",
+    "storage_bucket": "karass-b41bc.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:268042310073:android:1554b302b2838b537be668",
+        "android_client_info": {
+          "package_name": "com.example.karass"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDaQhkO1HNZKcPeyI-giGazzTIvf-V7DRY"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

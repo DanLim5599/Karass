@@ -1,0 +1,21 @@
+# Environment variables
+.env
+.env.local
+.env.production
+
+# Dependencies
+node_modules/
+
+# Database files (SQLite - no longer used but keep for safety)
+*.db
+
+# Service account credentials
+service-account.json
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS files
+.DS_Store
+Thumbs.db
