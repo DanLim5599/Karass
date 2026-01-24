@@ -175,7 +175,7 @@ class _WaitingForBeaconScreenState extends State<WaitingForBeaconScreen>
                 _buildInfoRow('Email', appProvider.userData.email ?? 'N/A'),
                 if (appProvider.userData.twitterHandle != null) ...[
                   const SizedBox(height: 8),
-                  _buildInfoRow('Twitter', '@${appProvider.userData.twitterHandle}'),
+                  _buildInfoRow('Twitter', appProvider.userData.twitterHandle!),
                 ],
               ],
             ),

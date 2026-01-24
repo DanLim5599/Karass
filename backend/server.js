@@ -3,19 +3,24 @@ const express = require('express');
 const { Pool } = require('pg');
 const bcrypt = require('bcryptjs');
 const cors = require('cors');
-const fs = require('fs');
-const path = require('path');
-const https = require('https');
 const crypto = require('crypto');
-const { google } = require('googleapis');
-const jwt = require('jsonwebtoken');
 const axios = require('axios');
+
+// Import modular utilities and middleware
+const { isValidEmail, isValidUsername, isValidPassword, sanitizeInt } = require('./utils/validation');
+const { initDb } = require('./utils/database');
+const { sendPushToTopic } = require('./services/fcm');
+const { securityHeaders } = require('./middleware/security');
+const { rateLimit, authRateLimit } = require('./middleware/rateLimit');
+const { generateToken, requireAuth, createRequireAdmin } = require('./middleware/auth');
 
 const app = express();
 
 // Security constants
 const BCRYPT_ROUNDS = 12;
-const RATE_LIMIT_MAX_IPS = 10000; // Maximum IPs to track (prevents memory exhaustion)
+
+// Create admin middleware with database pool access (initialized after pool creation)
+let requireAdmin;
 
 // Validate required environment variables at startup
 function validateEnv() {
@@ -26,21 +31,17 @@ function validateEnv() {
     process.exit(1);
   }
 
-  // Warn about insecure defaults
-  if (!process.env.ADMIN_SECRET_KEY) {
-    console.error('FATAL: ADMIN_SECRET_KEY environment variable is required');
-    process.exit(1);
-  }
-  if (process.env.ADMIN_PASSWORD === 'testpass' || !process.env.ADMIN_PASSWORD) {
-    console.warn('WARNING: Using weak admin password. Set a strong ADMIN_PASSWORD for production.');
-  }
+  // Note: Admin authentication now uses JWT tokens
+  // Users with is_admin=true in database can perform admin operations
 }
 
 validateEnv();
 
-// JWT Configuration
-const JWT_SECRET = process.env.JWT_SECRET || 'fallback-secret-change-in-production';
-const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '7d';
+// Validate JWT_SECRET is configured (auth operations use middleware/auth.js)
+if (!process.env.JWT_SECRET) {
+  console.error('FATAL: JWT_SECRET environment variable is required');
+  process.exit(1);
+}
 
 // Twitter OAuth Configuration
 const TWITTER_CLIENT_ID = process.env.TWITTER_CLIENT_ID;
@@ -50,8 +51,9 @@ const TWITTER_CALLBACK_URL = 'karass://callback';
 // In-memory store for PKCE verifiers (use Redis in production)
 const pkceStore = new Map();
 const PKCE_TTL = 10 * 60 * 1000; // 10 minutes
+const PKCE_MAX_ENTRIES = 1000; // Maximum concurrent OAuth flows
 
-// Clean up expired PKCE entries
+// Clean up expired PKCE entries and enforce max size
 setInterval(() => {
   const now = Date.now();
   for (const [state, data] of pkceStore.entries()) {
@@ -59,41 +61,13 @@ setInterval(() => {
       pkceStore.delete(state);
     }
   }
+  // If still over limit after cleanup, remove oldest entries
+  if (pkceStore.size > PKCE_MAX_ENTRIES) {
+    const entries = [...pkceStore.entries()].sort((a, b) => a[1].createdAt - b[1].createdAt);
+    const toRemove = entries.slice(0, pkceStore.size - PKCE_MAX_ENTRIES);
+    toRemove.forEach(([state]) => pkceStore.delete(state));
+  }
 }, 60000); // Clean every minute
-
-// Generate JWT token for a user
-function generateToken(user) {
-  return jwt.sign(
-    {
-      userId: user.id,
-      username: user.username,
-      isAdmin: user.is_admin
-    },
-    JWT_SECRET,
-    { expiresIn: JWT_EXPIRES_IN }
-  );
-}
-
-// Middleware to verify JWT token
-function requireAuth(req, res, next) {
-  const authHeader = req.headers['authorization'];
-  const token = authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : null;
-
-  if (!token) {
-    return res.status(401).json({ success: false, message: 'Authentication required' });
-  }
-
-  try {
-    const decoded = jwt.verify(token, JWT_SECRET);
-    req.user = decoded;
-    next();
-  } catch (error) {
-    if (error.name === 'TokenExpiredError') {
-      return res.status(401).json({ success: false, message: 'Token expired' });
-    }
-    return res.status(401).json({ success: false, message: 'Invalid token' });
-  }
-}
 
 // Security: Restrict CORS to specific origins (configure for production)
 const allowedOrigins = process.env.ALLOWED_ORIGINS?.split(',') || ['http://localhost:3000', 'http://10.0.2.2:3000'];
@@ -111,82 +85,14 @@ app.use(cors({
   credentials: true
 }));
 
+// Security headers middleware (from module)
+app.use(securityHeaders);
+
 // Security: Limit request body size to prevent DoS
 app.use(express.json({ limit: '10kb' }));
 
-// Simple in-memory rate limiting with memory management
-const rateLimitMap = new Map();
-const RATE_LIMIT_WINDOW = 60000; // 1 minute
-const RATE_LIMIT_MAX = 100; // max requests per window
-
-// Periodically clean up old rate limit entries to prevent memory leaks
-setInterval(() => {
-  const now = Date.now();
-  const windowStart = now - RATE_LIMIT_WINDOW;
-  for (const [ip, requests] of rateLimitMap.entries()) {
-    const validRequests = requests.filter(time => time > windowStart);
-    if (validRequests.length === 0) {
-      rateLimitMap.delete(ip);
-    } else {
-      rateLimitMap.set(ip, validRequests);
-    }
-  }
-}, RATE_LIMIT_WINDOW);
-
-function rateLimit(req, res, next) {
-  const ip = req.ip || req.connection.remoteAddress;
-  const now = Date.now();
-  const windowStart = now - RATE_LIMIT_WINDOW;
-
-  // Prevent memory exhaustion from too many unique IPs
-  if (rateLimitMap.size >= RATE_LIMIT_MAX_IPS && !rateLimitMap.has(ip)) {
-    return res.status(429).json({ success: false, message: 'Too many requests' });
-  }
-
-  if (!rateLimitMap.has(ip)) {
-    rateLimitMap.set(ip, []);
-  }
-
-  const requests = rateLimitMap.get(ip).filter(time => time > windowStart);
-  requests.push(now);
-  rateLimitMap.set(ip, requests);
-
-  if (requests.length > RATE_LIMIT_MAX) {
-    return res.status(429).json({ success: false, message: 'Too many requests' });
-  }
-
-  next();
-}
-
+// Apply rate limiting middleware (from module)
 app.use(rateLimit);
-
-// Input validation helpers
-function isValidEmail(email) {
-  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-  return emailRegex.test(email);
-}
-
-function isValidUsername(username) {
-  // 3-30 chars, alphanumeric and underscores only
-  const usernameRegex = /^[a-zA-Z0-9_]{3,30}$/;
-  return usernameRegex.test(username);
-}
-
-function isValidPassword(password) {
-  // Minimum 8 characters with at least one uppercase, one lowercase, and one number
-  if (typeof password !== 'string' || password.length < 8) {
-    return false;
-  }
-  const hasUppercase = /[A-Z]/.test(password);
-  const hasLowercase = /[a-z]/.test(password);
-  const hasNumber = /[0-9]/.test(password);
-  return hasUppercase && hasLowercase && hasNumber;
-}
-
-function sanitizeInt(value) {
-  const num = parseInt(value, 10);
-  return Number.isNaN(num) ? null : num;
-}
 
 // PostgreSQL connection pool with proper configuration
 const pool = new Pool({
@@ -202,176 +108,11 @@ const pool = new Pool({
   maxUses: 7500               // Close connection after 7500 uses
 });
 
-// Firebase Cloud Messaging configuration
-const FCM_PROJECT_ID = 'karass-b41bc';
-const SERVICE_ACCOUNT_PATH = path.join(__dirname, 'service-account.json');
-
-// Get OAuth2 access token for FCM
-async function getAccessToken() {
-  if (!fs.existsSync(SERVICE_ACCOUNT_PATH)) {
-    console.log('Warning: service-account.json not found. Push notifications disabled.');
-    return null;
-  }
-
-  const serviceAccount = JSON.parse(fs.readFileSync(SERVICE_ACCOUNT_PATH, 'utf8'));
-  const jwtClient = new google.auth.JWT(
-    serviceAccount.client_email,
-    null,
-    serviceAccount.private_key,
-    ['https://www.googleapis.com/auth/firebase.messaging']
-  );
-
-  const tokens = await jwtClient.authorize();
-  return tokens.access_token;
-}
-
-// Send FCM push notification to a topic
-async function sendPushToTopic(topic, title, body, data = {}) {
-  const accessToken = await getAccessToken();
-  if (!accessToken) return false;
-
-  const message = {
-    message: {
-      topic: topic,
-      notification: {
-        title: title,
-        body: body
-      },
-      data: {
-        ...data,
-        type: 'announcement'
-      },
-      android: {
-        priority: 'high',
-        notification: {
-          channel_id: 'announcement_channel'
-        }
-      },
-      apns: {
-        payload: {
-          aps: {
-            alert: {
-              title: title,
-              body: body
-            },
-            sound: 'default'
-          }
-        }
-      }
-    }
-  };
-
-  return new Promise((resolve) => {
-    const postData = JSON.stringify(message);
-
-    const options = {
-      hostname: 'fcm.googleapis.com',
-      port: 443,
-      path: `/v1/projects/${FCM_PROJECT_ID}/messages:send`,
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${accessToken}`,
-        'Content-Type': 'application/json',
-        'Content-Length': Buffer.byteLength(postData)
-      }
-    };
-
-    const req = https.request(options, (res) => {
-      let data = '';
-      res.on('data', (chunk) => data += chunk);
-      res.on('end', () => {
-        if (res.statusCode === 200) {
-          console.log('Push notification sent successfully');
-          resolve(true);
-        } else {
-          console.log('FCM response:', res.statusCode, data);
-          resolve(false);
-        }
-      });
-    });
-
-    req.on('error', (e) => {
-      console.error('FCM error:', e.message);
-      resolve(false);
-    });
-
-    req.write(postData);
-    req.end();
-  });
-}
-
-// Helper function to check if a column exists
-async function columnExists(tableName, columnName) {
-  const result = await pool.query(`
-    SELECT column_name FROM information_schema.columns
-    WHERE table_name = $1 AND column_name = $2
-  `, [tableName, columnName]);
-  return result.rows.length > 0;
-}
-
-// Helper function to add a column if it doesn't exist
-async function addColumnIfNotExists(tableName, columnName, columnDef) {
-  if (!(await columnExists(tableName, columnName))) {
-    await pool.query(`ALTER TABLE ${tableName} ADD COLUMN ${columnName} ${columnDef}`);
-    console.log(`Added column ${columnName} to ${tableName}`);
-  }
-}
-
-// Initialize database tables
-async function initDb() {
-  try {
-    // Create users table (base schema for new databases)
-    await pool.query(`
-      CREATE TABLE IF NOT EXISTS users (
-        id SERIAL PRIMARY KEY,
-        email TEXT UNIQUE,
-        username TEXT UNIQUE NOT NULL,
-        password TEXT,
-        twitter_handle TEXT,
-        twitter_id TEXT UNIQUE,
-        auth_provider TEXT DEFAULT 'email',
-        fcm_token TEXT,
-        is_approved BOOLEAN DEFAULT TRUE,
-        is_admin BOOLEAN DEFAULT FALSE,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-      )
-    `);
-
-    // Create announcements table
-    await pool.query(`
-      CREATE TABLE IF NOT EXISTS announcements (
-        id SERIAL PRIMARY KEY,
-        message TEXT NOT NULL,
-        created_by INTEGER REFERENCES users(id),
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        starts_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        expires_at TIMESTAMP
-      )
-    `);
-
-    // Migration: Add new columns for existing databases
-    await addColumnIfNotExists('announcements', 'starts_at', 'TIMESTAMP DEFAULT CURRENT_TIMESTAMP');
-    await addColumnIfNotExists('announcements', 'expires_at', 'TIMESTAMP');
-
-    // Migration: Add new columns for existing databases
-    await addColumnIfNotExists('users', 'twitter_id', 'TEXT UNIQUE');
-    await addColumnIfNotExists('users', 'auth_provider', "TEXT DEFAULT 'email'");
-
-    // Note: Making email/password nullable requires dropping NOT NULL constraint
-    // This is handled by the table definition above for new databases
-    // For existing databases, run these SQL commands manually if needed:
-    // ALTER TABLE users ALTER COLUMN email DROP NOT NULL;
-    // ALTER TABLE users ALTER COLUMN password DROP NOT NULL;
-
-    console.log('Database tables initialized');
-  } catch (error) {
-    console.error('Database initialization error:', error);
-    throw error;
-  }
-}
+// Initialize admin middleware with database pool
+requireAdmin = createRequireAdmin(pool);
 
 // Create Account
-app.post('/api/auth/register', async (req, res) => {
+app.post('/api/auth/register', authRateLimit, async (req, res) => {
   try {
     const { email, username, password, twitterHandle } = req.body;
 
@@ -406,8 +147,9 @@ app.post('/api/auth/register', async (req, res) => {
     const salt = await bcrypt.genSalt(BCRYPT_ROUNDS);
     const hashedPassword = await bcrypt.hash(password, salt);
 
-    // Auto-admin for specific email
-    const isAdmin = email.toLowerCase() === 'davidlimusername@gmail.com';
+    // Auto-admin based on environment variable (if configured)
+    const adminEmails = process.env.ADMIN_EMAILS ? process.env.ADMIN_EMAILS.toLowerCase().split(',') : [];
+    const isAdmin = adminEmails.includes(email.toLowerCase());
 
     // Create user (auto-approved)
     const result = await pool.query(
@@ -442,7 +184,7 @@ app.post('/api/auth/register', async (req, res) => {
 });
 
 // Login
-app.post('/api/auth/login', async (req, res) => {
+app.post('/api/auth/login', authRateLimit, async (req, res) => {
   try {
     const { emailOrUsername, password } = req.body;
 
@@ -537,7 +279,7 @@ app.get('/api/auth/status/:userId', async (req, res) => {
 // ============================================
 
 // Initialize Twitter OAuth flow - generates PKCE challenge
-app.get('/api/auth/twitter/init', async (req, res) => {
+app.get('/api/auth/twitter/init', authRateLimit, async (req, res) => {
   try {
     if (!TWITTER_CLIENT_ID) {
       return res.status(500).json({
@@ -590,7 +332,7 @@ app.get('/api/auth/twitter/init', async (req, res) => {
 });
 
 // Twitter OAuth callback - exchanges code for tokens
-app.post('/api/auth/twitter/callback', async (req, res) => {
+app.post('/api/auth/twitter/callback', authRateLimit, async (req, res) => {
   try {
     const { code, state, codeVerifier } = req.body;
 
@@ -608,11 +350,15 @@ app.post('/api/auth/twitter/callback', async (req, res) => {
       });
     }
 
-    // Validate state (optional - can verify against stored state)
+    // Validate state against stored PKCE data (REQUIRED for CSRF protection)
     const storedData = pkceStore.get(state);
-    if (storedData) {
-      pkceStore.delete(state); // Clean up
+    if (!storedData) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid or expired state parameter. Please try again.'
+      });
     }
+    pkceStore.delete(state); // Clean up after validation
 
     // Exchange authorization code for access token
     const tokenParams = new URLSearchParams({
@@ -797,39 +543,6 @@ app.post('/api/auth/twitter/link', requireAuth, async (req, res) => {
   }
 });
 
-// Admin secret key for API authentication (required - no fallback)
-const ADMIN_SECRET_KEY = process.env.ADMIN_SECRET_KEY;
-
-// Middleware to verify admin access
-// Requires both: valid admin user ID AND correct admin secret key
-async function requireAdmin(req, res, next) {
-  try {
-    // Check for admin secret key in Authorization header
-    const authHeader = req.headers['authorization'];
-    const providedKey = authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : null;
-
-    if (!providedKey || providedKey !== ADMIN_SECRET_KEY) {
-      return res.status(401).json({ success: false, message: 'Invalid admin credentials' });
-    }
-
-    const adminId = sanitizeInt(req.body.adminId || req.headers['x-admin-id']);
-    if (!adminId) {
-      return res.status(401).json({ success: false, message: 'Admin ID required' });
-    }
-
-    const result = await pool.query('SELECT is_admin FROM users WHERE id = $1', [adminId]);
-    if (result.rows.length === 0 || !result.rows[0].is_admin) {
-      return res.status(403).json({ success: false, message: 'Admin access required' });
-    }
-
-    req.adminId = adminId;
-    next();
-  } catch (error) {
-    console.error('Admin verification error:', error.message);
-    return res.status(500).json({ success: false, message: 'Server error' });
-  }
-}
-
 // Admin: Approve user
 app.post('/api/admin/approve/:userId', requireAdmin, async (req, res) => {
   try {
@@ -900,15 +613,12 @@ app.post('/api/admin/set-admin/:userId', requireAdmin, async (req, res) => {
   }
 });
 
-// Create announcement (admin only)
-app.post('/api/announcements', async (req, res) => {
+// Create announcement (admin only - uses JWT authentication)
+app.post('/api/announcements', requireAdmin, async (req, res) => {
   try {
-    const { userId, message, startsAt, expiresAt } = req.body;
+    const { message, startsAt, expiresAt } = req.body;
+    const adminUserId = req.adminId; // Set by requireAdmin middleware
 
-    const userIdNum = sanitizeInt(userId);
-    if (!userIdNum) {
-      return res.status(400).json({ success: false, message: 'Valid userId is required' });
-    }
     if (!message || typeof message !== 'string' || message.trim().length === 0) {
       return res.status(400).json({ success: false, message: 'Message is required' });
     }
@@ -927,17 +637,6 @@ app.post('/api/announcements', async (req, res) => {
       return res.status(400).json({ success: false, message: 'Invalid expiresAt date format' });
     }
 
-    // Check if user is admin
-    const userResult = await pool.query('SELECT is_admin FROM users WHERE id = $1', [userIdNum]);
-
-    if (userResult.rows.length === 0) {
-      return res.status(404).json({ success: false, message: 'User not found' });
-    }
-
-    if (!userResult.rows[0].is_admin) {
-      return res.status(403).json({ success: false, message: 'Admin access required' });
-    }
-
     // Delete all existing announcements (only keep one at a time)
     await pool.query('DELETE FROM announcements');
 
@@ -947,7 +646,7 @@ app.post('/api/announcements', async (req, res) => {
       `INSERT INTO announcements (message, created_by, starts_at, expires_at)
        VALUES ($1, $2, $3, $4)
        RETURNING id, message, created_at, starts_at, expires_at`,
-      [sanitizedMessage, userIdNum, startsAtDate, expiresAtDate]
+      [sanitizedMessage, adminUserId, startsAtDate, expiresAtDate]
     );
 
     const announcement = result.rows[0];
@@ -1053,7 +752,7 @@ const PORT = process.env.PORT || 3000;
 let server;
 
 // Initialize DB and start server
-initDb().then(async () => {
+initDb(pool).then(async () => {
   server = app.listen(PORT, () => {
     console.log(`Karass backend running on http://localhost:${PORT}`);
     console.log('Connected to Neon PostgreSQL database');

@@ -65,8 +65,14 @@ class NotificationService {
   final StreamController<NotificationPayload> _notificationController =
       StreamController<NotificationPayload>.broadcast();
 
+  final StreamController<String> _tokenRefreshController =
+      StreamController<String>.broadcast();
+
   Stream<NotificationPayload> get notificationStream =>
       _notificationController.stream;
+
+  /// Stream that emits when FCM token is refreshed
+  Stream<String> get tokenRefreshStream => _tokenRefreshController.stream;
 
   String? _fcmToken;
   String? get fcmToken => _fcmToken;
@@ -89,11 +95,11 @@ class NotificationService {
     // Get FCM token
     await _getFcmToken();
 
-    // Listen for token refresh
+    // Listen for token refresh and notify listeners
     _fcm.onTokenRefresh.listen((token) {
       _fcmToken = token;
       debugPrint('FCM Token refreshed');
-      // TODO: Send updated token to backend
+      _tokenRefreshController.add(token);
     });
 
     // Handle foreground messages

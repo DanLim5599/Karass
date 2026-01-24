@@ -35,6 +35,7 @@ class AppProvider extends ChangeNotifier {
 
   StreamSubscription<bool>? _bluetoothSubscription;
   StreamSubscription<bool>? _karassSubscription;
+  StreamSubscription<String>? _tokenRefreshSubscription;
 
   AppStage get stage => _stage;
   UserData get userData => _userData;
@@ -64,8 +65,7 @@ class AppProvider extends ChangeNotifier {
     // Listen to Bluetooth state changes
     _bluetoothSubscription = _bluetooth.bluetoothStateStream.listen((isOn) {
       _isBluetoothOn = isOn;
-      _updateStage();
-      notifyListeners();
+      _updateStage(); // _updateStage already calls notifyListeners()
     });
 
     // Listen for Karass beacon detection (only matters after signup)
@@ -75,8 +75,25 @@ class AppProvider extends ChangeNotifier {
       }
     });
 
+    // Listen for FCM token refresh and update backend
+    _tokenRefreshSubscription = _notifications.tokenRefreshStream.listen((token) {
+      _updateFcmTokenOnBackend(token);
+    });
+
     _isInitialized = true;
     notifyListeners();
+  }
+
+  /// Update FCM token on backend when it refreshes
+  Future<void> _updateFcmTokenOnBackend(String token) async {
+    if (_userId == null) return;
+    try {
+      // Use HTTP directly to update FCM token
+      // This ensures the token is always up to date on the server
+      await _api.updateFcmToken(_userId!, token);
+    } catch (e) {
+      debugPrint('Failed to update FCM token: $e');
+    }
   }
 
   void _updateStage({bool fromSplash = false}) {
@@ -261,10 +278,9 @@ class AppProvider extends ChangeNotifier {
     DateTime? startsAt,
     DateTime? expiresAt,
   }) async {
-    if (_userId == null || !_userData.isAdmin) return false;
+    if (!_userData.isAdmin) return false;
 
     final success = await _api.createAnnouncement(
-      userId: _userId!,
       message: message,
       startsAt: startsAt,
       expiresAt: expiresAt,
@@ -359,9 +375,11 @@ class AppProvider extends ChangeNotifier {
   }
 
   @override
+  @override
   void dispose() {
     _bluetoothSubscription?.cancel();
     _karassSubscription?.cancel();
+    _tokenRefreshSubscription?.cancel();
     _bluetooth.dispose();
     super.dispose();
   }

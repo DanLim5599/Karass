@@ -66,7 +66,6 @@ class ApiConfig {
   // 10.0.2.2 is the Android emulator's localhost alias
   static const String baseUrl = 'http://10.0.2.2:3000/api';
 
-  // Admin secret key for authenticated admin API calls
-  // IMPORTANT: Change this for production and keep it secret
-  static const String adminSecretKey = 'karass-admin-secret-key';
+  // Note: Admin operations now use JWT-based authentication
+  // The user's JWT token contains isAdmin claim which the backend verifies
 }

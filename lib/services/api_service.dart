@@ -137,11 +137,10 @@ class ApiService {
 
   Future<bool> approveUser(String userId) async {
     try {
+      final headers = await _getHeaders(includeAuth: true);
       final response = await http.post(
         Uri.parse('$baseUrl/admin/approve/$userId'),
-        headers: {
-          'Authorization': 'Bearer ${ApiConfig.adminSecretKey}',
-        },
+        headers: headers,
       );
 
       final data = jsonDecode(response.body);
@@ -180,14 +179,12 @@ class ApiService {
   }
 
   Future<bool> createAnnouncement({
-    required String userId,
     required String message,
     DateTime? startsAt,
     DateTime? expiresAt,
   }) async {
     try {
-      final body = {
-        'userId': userId,
+      final body = <String, dynamic>{
         'message': message,
       };
 
@@ -198,12 +195,10 @@ class ApiService {
         body['expiresAt'] = expiresAt.toIso8601String();
       }
 
+      final headers = await _getHeaders(includeAuth: true);
       final response = await http.post(
         Uri.parse('$baseUrl/announcements'),
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': 'Bearer ${ApiConfig.adminSecretKey}',
-        },
+        headers: headers,
         body: jsonEncode(body),
       );
 
@@ -216,11 +211,25 @@ class ApiService {
 
   Future<bool> setUserAsAdmin(String userId) async {
     try {
+      final headers = await _getHeaders(includeAuth: true);
       final response = await http.post(
         Uri.parse('$baseUrl/admin/set-admin/$userId'),
-        headers: {
-          'Authorization': 'Bearer ${ApiConfig.adminSecretKey}',
-        },
+        headers: headers,
+      );
+
+      final data = jsonDecode(response.body);
+      return data['success'] ?? false;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  Future<bool> updateFcmToken(String userId, String fcmToken) async {
+    try {
+      final response = await http.post(
+        Uri.parse('$baseUrl/users/$userId/fcm-token'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({'fcmToken': fcmToken}),
       );
 
       final data = jsonDecode(response.body);
