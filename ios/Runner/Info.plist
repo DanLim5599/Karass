@@ -45,5 +45,22 @@
 		<string>UIInterfaceOrientationLandscapeLeft</string>
 		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
+	<key>NSBluetoothAlwaysUsageDescription</key>
+	<string>This app uses Bluetooth to detect nearby Karass users.</string>
+	<key>NSBluetoothPeripheralUsageDescription</key>
+	<string>This app uses Bluetooth to detect nearby Karass users.</string>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeRole</key>
+			<string>Editor</string>
+			<key>CFBundleURLName</key>
+			<string>karass</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>karass</string>
+			</array>
+		</dict>
+	</array>
 </dict>
 </plist>
