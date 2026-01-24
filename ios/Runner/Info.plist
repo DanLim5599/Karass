@@ -49,6 +49,10 @@
 	<string>This app uses Bluetooth to detect nearby Karass users.</string>
 	<key>NSBluetoothPeripheralUsageDescription</key>
 	<string>This app uses Bluetooth to detect nearby Karass users.</string>
+	<key>NSBluetoothCentralUsageDescription</key>
+	<string>This app uses Bluetooth to scan for nearby Karass users.</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>This app uses local network to discover nearby Karass users.</string>
 	<key>CFBundleURLTypes</key>
 	<array>
 		<dict>

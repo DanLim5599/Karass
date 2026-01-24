@@ -17,14 +17,28 @@ class BluetoothService {
 
   Future<void> init() async {
     // Listen to Bluetooth adapter state
-    _adapterSubscription = FlutterBluePlus.adapterState.listen((state) {
-      _bluetoothStateController.add(state == BluetoothAdapterState.on);
-    });
+    _adapterSubscription = FlutterBluePlus.adapterState.listen(
+      (state) {
+        _bluetoothStateController.add(state == BluetoothAdapterState.on);
+      },
+      onError: (e) {
+        // Emit false on error - Bluetooth unavailable
+        _bluetoothStateController.add(false);
+      },
+    );
   }
 
   Future<bool> isBluetoothOn() async {
-    final state = await FlutterBluePlus.adapterState.first;
-    return state == BluetoothAdapterState.on;
+    try {
+      final state = await FlutterBluePlus.adapterState.first.timeout(
+        const Duration(seconds: 5),
+        onTimeout: () => BluetoothAdapterState.unknown,
+      );
+      return state == BluetoothAdapterState.on;
+    } catch (e) {
+      // Return false if we can't determine Bluetooth state
+      return false;
+    }
   }
 
   Future<bool> isSupported() async {

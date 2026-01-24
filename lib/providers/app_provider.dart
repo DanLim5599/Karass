@@ -51,34 +51,62 @@ class AppProvider extends ChangeNotifier {
   NotificationService get notifications => _notifications;
 
   Future<void> init() async {
-    await _storage.init();
-    await _haptic.init();
-    await _bluetooth.init();
+    try {
+      await _storage.init();
+    } catch (e) {
+      debugPrint('Storage init failed: $e');
+    }
+
+    try {
+      await _haptic.init();
+    } catch (e) {
+      debugPrint('Haptic init failed: $e');
+    }
+
+    try {
+      await _bluetooth.init();
+    } catch (e) {
+      debugPrint('Bluetooth init failed: $e');
+    }
 
     // Load saved user data and userId
     _userData = _storage.userData;
     _userId = _storage.userId;
 
-    // Check Bluetooth state
-    _isBluetoothOn = await _bluetooth.isBluetoothOn();
+    // Check Bluetooth state (with error handling)
+    try {
+      _isBluetoothOn = await _bluetooth.isBluetoothOn();
+    } catch (e) {
+      debugPrint('Bluetooth state check failed: $e');
+      _isBluetoothOn = false;
+    }
 
     // Listen to Bluetooth state changes
-    _bluetoothSubscription = _bluetooth.bluetoothStateStream.listen((isOn) {
-      _isBluetoothOn = isOn;
-      _updateStage(); // _updateStage already calls notifyListeners()
-    });
+    _bluetoothSubscription = _bluetooth.bluetoothStateStream.listen(
+      (isOn) {
+        _isBluetoothOn = isOn;
+        _updateStage(); // _updateStage already calls notifyListeners()
+      },
+      onError: (e) => debugPrint('Bluetooth state stream error: $e'),
+    );
 
     // Listen for Karass beacon detection (only matters after signup)
-    _karassSubscription = _bluetooth.karassDetectedStream.listen((detected) {
-      if (detected && _stage == AppStage.waitingForBeacon) {
-        _onBeaconDetected();
-      }
-    });
+    _karassSubscription = _bluetooth.karassDetectedStream.listen(
+      (detected) {
+        if (detected && _stage == AppStage.waitingForBeacon) {
+          _onBeaconDetected();
+        }
+      },
+      onError: (e) => debugPrint('Karass detection stream error: $e'),
+    );
 
     // Listen for FCM token refresh and update backend
-    _tokenRefreshSubscription = _notifications.tokenRefreshStream.listen((token) {
-      _updateFcmTokenOnBackend(token);
-    });
+    _tokenRefreshSubscription = _notifications.tokenRefreshStream.listen(
+      (token) {
+        _updateFcmTokenOnBackend(token);
+      },
+      onError: (e) => debugPrint('Token refresh stream error: $e'),
+    );
 
     _isInitialized = true;
     notifyListeners();
