@@ -403,7 +403,6 @@ class AppProvider extends ChangeNotifier {
   }
 
   @override
-  @override
   void dispose() {
     _bluetoothSubscription?.cancel();
     _karassSubscription?.cancel();

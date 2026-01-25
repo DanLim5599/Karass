@@ -45,12 +45,21 @@
 		<string>UIInterfaceOrientationLandscapeLeft</string>
 		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>bluetooth-central</string>
+		<string>bluetooth-peripheral</string>
+	</array>
 	<key>NSBluetoothAlwaysUsageDescription</key>
 	<string>This app uses Bluetooth to detect nearby Karass users.</string>
 	<key>NSBluetoothPeripheralUsageDescription</key>
-	<string>This app uses Bluetooth to detect nearby Karass users.</string>
+	<string>This app uses Bluetooth to broadcast your presence to nearby Karass users.</string>
 	<key>NSBluetoothCentralUsageDescription</key>
 	<string>This app uses Bluetooth to scan for nearby Karass users.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>This app needs location access for Bluetooth scanning to detect nearby Karass users.</string>
+	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+	<string>This app needs location access for Bluetooth scanning to detect nearby Karass users.</string>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>This app uses local network to discover nearby Karass users.</string>
 	<key>CFBundleURLTypes</key>

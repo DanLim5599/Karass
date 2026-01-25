@@ -14,13 +14,14 @@ class WaitingForBeaconScreen extends StatefulWidget {
 }
 
 class _WaitingForBeaconScreenState extends State<WaitingForBeaconScreen>
-    with SingleTickerProviderStateMixin {
+    with SingleTickerProviderStateMixin, WidgetsBindingObserver {
   late AnimationController _pulseController;
   late Animation<double> _pulseAnimation;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
 
     // Pulse animation for the scanning indicator
     _pulseController = AnimationController(
@@ -34,14 +35,35 @@ class _WaitingForBeaconScreenState extends State<WaitingForBeaconScreen>
 
     // Start scanning for beacons when this screen appears
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      context.read<AppProvider>().startBeaconScanning();
+      final provider = context.read<AppProvider>();
+      provider.startBeaconScanning();
+      // Also start beaconing so other users can find us
+      provider.bluetooth.startBeaconing();
     });
   }
 
   @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    final provider = context.read<AppProvider>();
+    if (state == AppLifecycleState.paused || state == AppLifecycleState.inactive) {
+      // Stop scanning/beaconing when app goes to background
+      provider.stopBeaconScanning();
+      provider.bluetooth.stopBeaconing();
+    } else if (state == AppLifecycleState.resumed) {
+      // Resume scanning/beaconing when app comes back
+      provider.startBeaconScanning();
+      provider.bluetooth.startBeaconing();
+    }
+  }
+
+  @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _pulseController.dispose();
-    // Stop scanning when leaving this screen
+    // Stop scanning and beaconing when leaving this screen
+    final provider = context.read<AppProvider>();
+    provider.stopBeaconScanning();
+    provider.bluetooth.stopBeaconing();
     super.dispose();
   }
 

@@ -5,8 +5,10 @@
 list(APPEND FLUTTER_PLUGIN_LIST
   desktop_webview_window
   firebase_core
+  flutter_ble_peripheral
   flutter_blue_plus_winrt
   flutter_secure_storage_windows
+  permission_handler_windows
   url_launcher_windows
   window_to_front
 )

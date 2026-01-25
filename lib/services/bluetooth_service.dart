@@ -1,10 +1,15 @@
 import 'dart:async';
+import 'dart:io';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
+import 'package:flutter_ble_peripheral/flutter_ble_peripheral.dart';
+import 'package:permission_handler/permission_handler.dart';
 import '../config/constants.dart';
 
 class BluetoothService {
   StreamSubscription<List<ScanResult>>? _scanSubscription;
   StreamSubscription<BluetoothAdapterState>? _adapterSubscription;
+  Timer? _scanTimer;
 
   final StreamController<bool> _bluetoothStateController = StreamController<bool>.broadcast();
   final StreamController<bool> _karrassDetectedController = StreamController<bool>.broadcast();
@@ -14,18 +19,74 @@ class BluetoothService {
 
   bool _isScanning = false;
   bool _isAdvertising = false;
+  bool _continuousScanning = false;
+
+  // BLE Peripheral for advertising
+  final FlutterBlePeripheral _blePeripheral = FlutterBlePeripheral();
 
   Future<void> init() async {
     // Listen to Bluetooth adapter state
     _adapterSubscription = FlutterBluePlus.adapterState.listen(
       (state) {
-        _bluetoothStateController.add(state == BluetoothAdapterState.on);
+        final isOn = state == BluetoothAdapterState.on;
+        _bluetoothStateController.add(isOn);
+
+        // If Bluetooth turns off, stop scanning and advertising
+        if (!isOn) {
+          _stopScanLoop();
+          stopBeaconing();
+        }
       },
       onError: (e) {
-        // Emit false on error - Bluetooth unavailable
+        debugPrint('Bluetooth adapter state error: $e');
         _bluetoothStateController.add(false);
       },
     );
+  }
+
+  /// Request all necessary permissions for Bluetooth
+  Future<bool> requestPermissions() async {
+    if (Platform.isAndroid) {
+      // Android 12+ requires these permissions at runtime
+      final bluetoothScan = await Permission.bluetoothScan.request();
+      final bluetoothConnect = await Permission.bluetoothConnect.request();
+      final bluetoothAdvertise = await Permission.bluetoothAdvertise.request();
+      final location = await Permission.locationWhenInUse.request();
+
+      final allGranted = bluetoothScan.isGranted &&
+          bluetoothConnect.isGranted &&
+          bluetoothAdvertise.isGranted &&
+          location.isGranted;
+
+      if (!allGranted) {
+        debugPrint('Bluetooth permissions not fully granted');
+        debugPrint('Scan: $bluetoothScan, Connect: $bluetoothConnect, Advertise: $bluetoothAdvertise, Location: $location');
+      }
+
+      return allGranted;
+    } else if (Platform.isIOS) {
+      // iOS handles Bluetooth permissions through system prompts
+      // Location is needed for BLE scanning on iOS
+      final bluetooth = await Permission.bluetooth.request();
+      final location = await Permission.locationWhenInUse.request();
+
+      return bluetooth.isGranted && location.isGranted;
+    }
+    return true;
+  }
+
+  /// Check if permissions are granted
+  Future<bool> hasPermissions() async {
+    if (Platform.isAndroid) {
+      return await Permission.bluetoothScan.isGranted &&
+          await Permission.bluetoothConnect.isGranted &&
+          await Permission.bluetoothAdvertise.isGranted &&
+          await Permission.locationWhenInUse.isGranted;
+    } else if (Platform.isIOS) {
+      return await Permission.bluetooth.isGranted &&
+          await Permission.locationWhenInUse.isGranted;
+    }
+    return true;
   }
 
   Future<bool> isBluetoothOn() async {
@@ -36,7 +97,7 @@ class BluetoothService {
       );
       return state == BluetoothAdapterState.on;
     } catch (e) {
-      // Return false if we can't determine Bluetooth state
+      debugPrint('Error checking Bluetooth state: $e');
       return false;
     }
   }
@@ -46,39 +107,108 @@ class BluetoothService {
   }
 
   Future<void> requestBluetoothOn() async {
-    await FlutterBluePlus.turnOn();
+    try {
+      await FlutterBluePlus.turnOn();
+    } catch (e) {
+      debugPrint('Error turning on Bluetooth: $e');
+    }
   }
 
-  Future<void> startScanning() async {
+  /// Start continuous scanning with automatic restart
+  Future<void> startContinuousScanning() async {
+    if (_continuousScanning) return;
+
+    // Check and request permissions first
+    if (!await hasPermissions()) {
+      final granted = await requestPermissions();
+      if (!granted) {
+        debugPrint('Cannot start scanning - permissions not granted');
+        return;
+      }
+    }
+
+    _continuousScanning = true;
+    await _startScanCycle();
+  }
+
+  /// Internal method to run one scan cycle
+  Future<void> _startScanCycle() async {
+    if (!_continuousScanning) return;
+
+    await _doScan();
+
+    // Schedule next scan after interval
+    _scanTimer?.cancel();
+    _scanTimer = Timer(BluetoothConfig.scanInterval, () {
+      if (_continuousScanning) {
+        _startScanCycle();
+      }
+    });
+  }
+
+  /// Perform a single scan
+  Future<void> _doScan() async {
     if (_isScanning) return;
     _isScanning = true;
 
     try {
-      // Start scanning for devices
+      debugPrint('Starting BLE scan...');
+
+      // Cancel any existing subscription
+      await _scanSubscription?.cancel();
+
+      // Listen to scan results
+      _scanSubscription = FlutterBluePlus.scanResults.listen(
+        (results) {
+          for (final result in results) {
+            if (_isKarassBeacon(result)) {
+              debugPrint('Karass beacon detected: ${result.device.platformName}');
+              _karrassDetectedController.add(true);
+              // Don't break - continue listening for more
+            }
+          }
+        },
+        onError: (e) {
+          debugPrint('Scan results error: $e');
+        },
+      );
+
+      // Start scanning
       await FlutterBluePlus.startScan(
         timeout: BluetoothConfig.scanDuration,
         androidUsesFineLocation: true,
       );
 
-      // Listen to scan results
-      _scanSubscription = FlutterBluePlus.scanResults.listen((results) {
-        for (final result in results) {
-          // Check if this is a Karass beacon
-          if (_isKarassBeacon(result)) {
-            _karrassDetectedController.add(true);
-            break;
-          }
-        }
-      });
+      debugPrint('Scan completed');
     } catch (e) {
+      debugPrint('Scan error: $e');
+    } finally {
       _isScanning = false;
-      rethrow;
     }
   }
 
+  /// Legacy method - starts a single scan (for backward compatibility)
+  Future<void> startScanning() async {
+    await startContinuousScanning();
+  }
+
+  /// Stop continuous scanning
   Future<void> stopScanning() async {
-    await FlutterBluePlus.stopScan();
-    await _scanSubscription?.cancel();
+    _stopScanLoop();
+  }
+
+  void _stopScanLoop() {
+    _continuousScanning = false;
+    _scanTimer?.cancel();
+    _scanTimer = null;
+
+    try {
+      FlutterBluePlus.stopScan();
+    } catch (e) {
+      debugPrint('Error stopping scan: $e');
+    }
+
+    _scanSubscription?.cancel();
     _scanSubscription = null;
     _isScanning = false;
   }
@@ -87,6 +217,7 @@ class BluetoothService {
     // Check for our custom service UUID in advertised services
     for (final serviceUuid in result.advertisementData.serviceUuids) {
       if (serviceUuid.toString().toLowerCase() == BluetoothConfig.serviceUuid.toLowerCase()) {
+        debugPrint('Found Karass beacon by UUID: ${result.device.platformName}');
         return true;
       }
     }
@@ -94,42 +225,96 @@ class BluetoothService {
     // Alternative: Check device name for "Karass" prefix
     final name = result.device.platformName.toLowerCase();
     if (name.contains('karass')) {
+      debugPrint('Found Karass beacon by name: $name');
       return true;
     }
 
-    // For MVP/testing: Consider any device with strong signal as potential Karass user
-    // This can be removed in production
-    // if (result.rssi > -50) {
-    //   return true;
-    // }
+    // Check local name in advertisement data
+    final localName = result.advertisementData.advName.toLowerCase();
+    if (localName.contains('karass')) {
+      debugPrint('Found Karass beacon by local name: $localName');
+      return true;
+    }
 
     return false;
   }
 
-  // Advertising (beaconing) - Note: This requires platform-specific implementation
-  // For iOS/Android BLE advertising, additional setup is needed
+  /// Start BLE advertising (beaconing)
   Future<void> startBeaconing() async {
     if (_isAdvertising) return;
-    _isAdvertising = true;
 
-    // Note: flutter_blue_plus primarily supports central (scanning) mode
-    // For full peripheral (advertising) support, consider using:
-    // - flutter_ble_peripheral package
-    // - Platform channels for native implementation
+    // Check and request permissions first
+    if (!await hasPermissions()) {
+      final granted = await requestPermissions();
+      if (!granted) {
+        debugPrint('Cannot start beaconing - permissions not granted');
+        return;
+      }
+    }
 
-    // For MVP, we'll simulate beaconing status
-    // In production, implement actual BLE advertising
+    try {
+      // Check if peripheral mode is supported
+      final isSupported = await _blePeripheral.isSupported;
+      if (!isSupported) {
+        debugPrint('BLE Peripheral mode not supported on this device');
+        return;
+      }
+
+      // Create advertisement data
+      final advertiseData = AdvertiseData(
+        serviceUuid: BluetoothConfig.serviceUuid,
+        localName: 'Karass',
+        includePowerLevel: true,
+      );
+
+      // Start advertising
+      await _blePeripheral.start(
+        advertiseData: advertiseData,
+        advertiseSettings: AdvertiseSettings(
+          advertiseMode: AdvertiseMode.advertiseModeLowLatency,
+          txPowerLevel: AdvertiseTxPower.advertiseTxPowerHigh,
+          connectable: false,
+          timeout: 0, // Advertise indefinitely
+        ),
+      );
+
+      _isAdvertising = true;
+      debugPrint('BLE advertising started with UUID: ${BluetoothConfig.serviceUuid}');
+    } catch (e) {
+      debugPrint('Error starting BLE advertising: $e');
+      _isAdvertising = false;
+    }
   }
 
+  /// Stop BLE advertising
   Future<void> stopBeaconing() async {
-    _isAdvertising = false;
+    if (!_isAdvertising) return;
+
+    try {
+      await _blePeripheral.stop();
+      _isAdvertising = false;
+      debugPrint('BLE advertising stopped');
+    } catch (e) {
+      debugPrint('Error stopping BLE advertising: $e');
+    }
   }
 
-  bool get isScanning => _isScanning;
+  bool get isScanning => _isScanning || _continuousScanning;
   bool get isBeaconing => _isAdvertising;
 
-  Future<void> dispose() async {
+  /// Pause scanning (for app lifecycle)
+  Future<void> pause() async {
     await stopScanning();
+    await stopBeaconing();
+  }
+
+  /// Resume scanning (for app lifecycle)
+  Future<void> resume() async {
+    // Let the caller decide whether to resume scanning/beaconing
+  }
+
+  Future<void> dispose() async {
+    _stopScanLoop();
     await stopBeaconing();
     await _adapterSubscription?.cancel();
     await _bluetoothStateController.close();
