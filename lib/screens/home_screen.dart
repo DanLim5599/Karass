@@ -27,7 +27,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     WidgetsBinding.instance.addObserver(this);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final provider = context.read<AppProvider>();
-      provider.startScanning();
+      // No need to scan on HomeScreen - user is already unlocked
+      // Scanning only happens on WaitingForBeaconScreen
       _fetchAndShowAnnouncement(provider);
     });
   }
@@ -36,22 +37,13 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _expiryTimer?.cancel();
-    // Stop scanning when leaving this screen
-    context.read<AppProvider>().stopScanning();
     super.dispose();
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    final provider = context.read<AppProvider>();
-
-    if (state == AppLifecycleState.paused || state == AppLifecycleState.inactive) {
-      // Stop scanning when app goes to background to save battery
-      provider.stopScanning();
-    } else if (state == AppLifecycleState.resumed) {
-      // Resume scanning when app comes back
-      provider.startScanning();
-      // Re-check announcement expiry
+    // Re-check announcement when app comes back to foreground
+    if (state == AppLifecycleState.resumed) {
       _recheckAnnouncementExpiry();
     }
   }
