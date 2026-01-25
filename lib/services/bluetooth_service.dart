@@ -48,19 +48,18 @@ class BluetoothService {
   Future<bool> requestPermissions() async {
     if (Platform.isAndroid) {
       // Android 12+ requires these permissions at runtime
+      // Note: We use neverForLocation flag in AndroidManifest, so we don't need location permission
       final bluetoothScan = await Permission.bluetoothScan.request();
       final bluetoothConnect = await Permission.bluetoothConnect.request();
       final bluetoothAdvertise = await Permission.bluetoothAdvertise.request();
-      final location = await Permission.locationWhenInUse.request();
 
       final allGranted = bluetoothScan.isGranted &&
           bluetoothConnect.isGranted &&
-          bluetoothAdvertise.isGranted &&
-          location.isGranted;
+          bluetoothAdvertise.isGranted;
 
       if (!allGranted) {
         debugPrint('Bluetooth permissions not fully granted');
-        debugPrint('Scan: $bluetoothScan, Connect: $bluetoothConnect, Advertise: $bluetoothAdvertise, Location: $location');
+        debugPrint('Scan: $bluetoothScan, Connect: $bluetoothConnect, Advertise: $bluetoothAdvertise');
       }
 
       return allGranted;
@@ -85,10 +84,10 @@ class BluetoothService {
   /// Check if permissions are granted
   Future<bool> hasPermissions() async {
     if (Platform.isAndroid) {
+      // No location needed on Android - we use neverForLocation flag
       return await Permission.bluetoothScan.isGranted &&
           await Permission.bluetoothConnect.isGranted &&
-          await Permission.bluetoothAdvertise.isGranted &&
-          await Permission.locationWhenInUse.isGranted;
+          await Permission.bluetoothAdvertise.isGranted;
     } else if (Platform.isIOS) {
       // On iOS, only check location. Bluetooth permission is handled by the system
       // automatically when we try to use CBCentralManager/CBPeripheralManager
