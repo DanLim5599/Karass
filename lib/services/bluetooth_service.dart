@@ -65,12 +65,19 @@ class BluetoothService {
 
       return allGranted;
     } else if (Platform.isIOS) {
-      // iOS handles Bluetooth permissions through system prompts
-      // Location is needed for BLE scanning on iOS
-      final bluetooth = await Permission.bluetooth.request();
+      // iOS handles Bluetooth permissions automatically via system prompts
+      // when CBCentralManager/CBPeripheralManager is initialized.
+      // We only need to request location permission explicitly.
       final location = await Permission.locationWhenInUse.request();
 
-      return bluetooth.isGranted && location.isGranted;
+      if (!location.isGranted) {
+        debugPrint('iOS: Location permission not granted: $location');
+        return false;
+      }
+
+      // For Bluetooth on iOS, we return true and let the native code
+      // trigger the Bluetooth permission dialog when needed
+      return true;
     }
     return true;
   }
@@ -83,8 +90,9 @@ class BluetoothService {
           await Permission.bluetoothAdvertise.isGranted &&
           await Permission.locationWhenInUse.isGranted;
     } else if (Platform.isIOS) {
-      return await Permission.bluetooth.isGranted &&
-          await Permission.locationWhenInUse.isGranted;
+      // On iOS, only check location. Bluetooth permission is handled by the system
+      // automatically when we try to use CBCentralManager/CBPeripheralManager
+      return await Permission.locationWhenInUse.isGranted;
     }
     return true;
   }
