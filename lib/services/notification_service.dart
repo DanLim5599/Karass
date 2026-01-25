@@ -201,28 +201,11 @@ class NotificationService {
 
   Future<void> _getFcmToken() async {
     try {
-      // On iOS, we need to wait for APNS token before getting FCM token
-      if (Platform.isIOS) {
-        // First check if APNS token is available
-        String? apnsToken = await _fcm.getAPNSToken();
-        if (apnsToken == null) {
-          debugPrint('APNS token not yet available, waiting...');
-          // Wait a bit for APNS to be set up after permission grant
-          await Future.delayed(const Duration(seconds: 2));
-          apnsToken = await _fcm.getAPNSToken();
-        }
-        if (apnsToken == null) {
-          debugPrint('APNS token still not available - push notifications may not work');
-          debugPrint('This is expected on iOS Simulator or when entitlements are missing');
-          return;
-        }
-      }
       _fcmToken = await _fcm.getToken();
       debugPrint('FCM Token obtained');
       // TODO: Send token to backend for push notification targeting
     } catch (e) {
       debugPrint('Error getting FCM token: $e');
-      // This is expected on iOS Simulator or development builds without proper entitlements
     }
   }
 
