@@ -11,11 +11,28 @@ class BluetoothService {
   StreamSubscription<BluetoothAdapterState>? _adapterSubscription;
   Timer? _scanTimer;
 
-  final StreamController<bool> _bluetoothStateController = StreamController<bool>.broadcast();
-  final StreamController<bool> _karrassDetectedController = StreamController<bool>.broadcast();
+  StreamController<bool>? _bluetoothStateController;
+  StreamController<bool>? _karrassDetectedController;
 
-  Stream<bool> get bluetoothStateStream => _bluetoothStateController.stream;
-  Stream<bool> get karassDetectedStream => _karrassDetectedController.stream;
+  /// Ensure stream controllers are open, recreate if closed
+  void _ensureControllersOpen() {
+    if (_bluetoothStateController == null || _bluetoothStateController!.isClosed) {
+      _bluetoothStateController = StreamController<bool>.broadcast();
+    }
+    if (_karrassDetectedController == null || _karrassDetectedController!.isClosed) {
+      _karrassDetectedController = StreamController<bool>.broadcast();
+    }
+  }
+
+  Stream<bool> get bluetoothStateStream {
+    _ensureControllersOpen();
+    return _bluetoothStateController!.stream;
+  }
+
+  Stream<bool> get karassDetectedStream {
+    _ensureControllersOpen();
+    return _karrassDetectedController!.stream;
+  }
 
   bool _isScanning = false;
   bool _isAdvertising = false;
@@ -25,11 +42,18 @@ class BluetoothService {
   final FlutterBlePeripheral _blePeripheral = FlutterBlePeripheral();
 
   Future<void> init() async {
+    // Ensure controllers are open
+    _ensureControllersOpen();
+
+    // Cancel any existing subscription before creating new one
+    await _adapterSubscription?.cancel();
+
     // Listen to Bluetooth adapter state
     _adapterSubscription = FlutterBluePlus.adapterState.listen(
       (state) {
         final isOn = state == BluetoothAdapterState.on;
-        _bluetoothStateController.add(isOn);
+        _ensureControllersOpen();
+        _bluetoothStateController?.add(isOn);
 
         // If Bluetooth turns off, stop scanning and advertising
         if (!isOn) {
@@ -39,7 +63,8 @@ class BluetoothService {
       },
       onError: (e) {
         debugPrint('Bluetooth adapter state error: $e');
-        _bluetoothStateController.add(false);
+        _ensureControllersOpen();
+        _bluetoothStateController?.add(false);
       },
     );
   }
@@ -170,7 +195,8 @@ class BluetoothService {
           for (final result in results) {
             if (_isKarassBeacon(result)) {
               debugPrint('Karass beacon detected: ${result.device.platformName}');
-              _karrassDetectedController.add(true);
+              _ensureControllersOpen();
+              _karrassDetectedController?.add(true);
               // Don't break - continue listening for more
             }
           }
@@ -324,7 +350,10 @@ class BluetoothService {
     _stopScanLoop();
     await stopBeaconing();
     await _adapterSubscription?.cancel();
-    await _bluetoothStateController.close();
-    await _karrassDetectedController.close();
+    _adapterSubscription = null;
+    await _bluetoothStateController?.close();
+    await _karrassDetectedController?.close();
+    _bluetoothStateController = null;
+    _karrassDetectedController = null;
   }
 }

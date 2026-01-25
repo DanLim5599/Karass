@@ -12,13 +12,16 @@ void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
   // Initialize Firebase with generated options
+  // Check if already initialized to avoid crash on hot restart/app reopen
   try {
-    await Firebase.initializeApp(
-      options: DefaultFirebaseOptions.currentPlatform,
-    );
+    if (Firebase.apps.isEmpty) {
+      await Firebase.initializeApp(
+        options: DefaultFirebaseOptions.currentPlatform,
+      );
+    }
     firebaseInitialized = true;
 
-    // Initialize notification service
+    // Initialize notification service (handles its own reinitialization)
     await NotificationService().init();
 
     // Subscribe to announcements topic

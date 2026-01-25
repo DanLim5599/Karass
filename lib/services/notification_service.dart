@@ -62,17 +62,29 @@ class NotificationService {
   final FlutterLocalNotificationsPlugin _localNotifications =
       FlutterLocalNotificationsPlugin();
 
-  final StreamController<NotificationPayload> _notificationController =
-      StreamController<NotificationPayload>.broadcast();
+  StreamController<NotificationPayload>? _notificationController;
+  StreamController<String>? _tokenRefreshController;
 
-  final StreamController<String> _tokenRefreshController =
-      StreamController<String>.broadcast();
-
-  Stream<NotificationPayload> get notificationStream =>
-      _notificationController.stream;
+  Stream<NotificationPayload> get notificationStream {
+    _ensureControllersOpen();
+    return _notificationController!.stream;
+  }
 
   /// Stream that emits when FCM token is refreshed
-  Stream<String> get tokenRefreshStream => _tokenRefreshController.stream;
+  Stream<String> get tokenRefreshStream {
+    _ensureControllersOpen();
+    return _tokenRefreshController!.stream;
+  }
+
+  /// Ensure stream controllers are open, recreate if closed
+  void _ensureControllersOpen() {
+    if (_notificationController == null || _notificationController!.isClosed) {
+      _notificationController = StreamController<NotificationPayload>.broadcast();
+    }
+    if (_tokenRefreshController == null || _tokenRefreshController!.isClosed) {
+      _tokenRefreshController = StreamController<String>.broadcast();
+    }
+  }
 
   String? _fcmToken;
   String? get fcmToken => _fcmToken;
@@ -81,6 +93,9 @@ class NotificationService {
 
   /// Initialize the notification service
   Future<void> init() async {
+    // Ensure controllers are open even if already initialized
+    _ensureControllersOpen();
+
     if (_isInitialized) return;
 
     // Set up background message handler
@@ -99,7 +114,8 @@ class NotificationService {
     _fcm.onTokenRefresh.listen((token) {
       _fcmToken = token;
       debugPrint('FCM Token refreshed');
-      _tokenRefreshController.add(token);
+      _ensureControllersOpen();
+      _tokenRefreshController?.add(token);
     });
 
     // Handle foreground messages
@@ -226,7 +242,8 @@ class NotificationService {
     }
 
     // Emit to stream
-    _notificationController.add(NotificationPayload(
+    _ensureControllersOpen();
+    _notificationController?.add(NotificationPayload(
       type: _parseNotificationType(data['type']),
       title: notification?.title ?? data['title'] ?? '',
       body: notification?.body ?? data['body'] ?? '',
@@ -240,7 +257,8 @@ class NotificationService {
     final data = message.data;
     final notification = message.notification;
 
-    _notificationController.add(NotificationPayload(
+    _ensureControllersOpen();
+    _notificationController?.add(NotificationPayload(
       type: _parseNotificationType(data['type']),
       title: notification?.title ?? data['title'] ?? '',
       body: notification?.body ?? data['body'] ?? '',
@@ -254,7 +272,8 @@ class NotificationService {
     if (response.payload != null) {
       try {
         final data = jsonDecode(response.payload!) as Map<String, dynamic>;
-        _notificationController.add(NotificationPayload.fromJson(data));
+        _ensureControllersOpen();
+        _notificationController?.add(NotificationPayload.fromJson(data));
       } catch (e) {
         debugPrint('Error parsing notification payload: $e');
       }
@@ -391,6 +410,11 @@ class NotificationService {
   }
 
   void dispose() {
-    _notificationController.close();
+    _notificationController?.close();
+    _tokenRefreshController?.close();
+    _notificationController = null;
+    _tokenRefreshController = null;
+    // Reset initialization flag so it can reinitialize if needed
+    _isInitialized = false;
   }
 }

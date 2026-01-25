@@ -18,6 +18,9 @@ class _WaitingForBeaconScreenState extends State<WaitingForBeaconScreen>
   late AnimationController _pulseController;
   late Animation<double> _pulseAnimation;
 
+  // Store provider reference to avoid using context in dispose/lifecycle methods
+  AppProvider? _appProvider;
+
   @override
   void initState() {
     super.initState();
@@ -35,24 +38,26 @@ class _WaitingForBeaconScreenState extends State<WaitingForBeaconScreen>
 
     // Start scanning for beacons when this screen appears
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      final provider = context.read<AppProvider>();
-      provider.startBeaconScanning();
+      if (!mounted) return;
+      _appProvider = context.read<AppProvider>();
+      _appProvider?.startBeaconScanning();
       // Also start beaconing so other users can find us
-      provider.bluetooth.startBeaconing();
+      _appProvider?.bluetooth.startBeaconing();
     });
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    final provider = context.read<AppProvider>();
+    if (_appProvider == null) return;
+
     if (state == AppLifecycleState.paused || state == AppLifecycleState.inactive) {
       // Stop scanning/beaconing when app goes to background
-      provider.stopBeaconScanning();
-      provider.bluetooth.stopBeaconing();
+      _appProvider?.stopBeaconScanning();
+      _appProvider?.bluetooth.stopBeaconing();
     } else if (state == AppLifecycleState.resumed) {
       // Resume scanning/beaconing when app comes back
-      provider.startBeaconScanning();
-      provider.bluetooth.startBeaconing();
+      _appProvider?.startBeaconScanning();
+      _appProvider?.bluetooth.startBeaconing();
     }
   }
 
@@ -61,9 +66,9 @@ class _WaitingForBeaconScreenState extends State<WaitingForBeaconScreen>
     WidgetsBinding.instance.removeObserver(this);
     _pulseController.dispose();
     // Stop scanning and beaconing when leaving this screen
-    final provider = context.read<AppProvider>();
-    provider.stopBeaconScanning();
-    provider.bluetooth.stopBeaconing();
+    _appProvider?.stopBeaconScanning();
+    _appProvider?.bluetooth.stopBeaconing();
+    _appProvider = null;
     super.dispose();
   }
 
