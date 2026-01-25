@@ -37,13 +37,22 @@ class BluetoothService {
   bool _isScanning = false;
   bool _isAdvertising = false;
   bool _continuousScanning = false;
+  bool _isInitialized = false;
 
-  // BLE Peripheral for advertising
-  final FlutterBlePeripheral _blePeripheral = FlutterBlePeripheral();
+  // BLE Peripheral for advertising - recreated on init to handle XPC connection issues
+  FlutterBlePeripheral? _blePeripheral;
 
   Future<void> init() async {
     // Ensure controllers are open
     _ensureControllersOpen();
+
+    // Reset advertising state - any previous advertising is lost when app was closed
+    _isAdvertising = false;
+    _isScanning = false;
+    _continuousScanning = false;
+
+    // Create fresh BLE peripheral instance to avoid stale XPC connections on iOS
+    _blePeripheral = FlutterBlePeripheral();
 
     // Cancel any existing subscription before creating new one
     await _adapterSubscription?.cancel();
@@ -58,7 +67,7 @@ class BluetoothService {
         // If Bluetooth turns off, stop scanning and advertising
         if (!isOn) {
           _stopScanLoop();
-          stopBeaconing();
+          _safeStopBeaconing();
         }
       },
       onError: (e) {
@@ -67,6 +76,22 @@ class BluetoothService {
         _bluetoothStateController?.add(false);
       },
     );
+
+    _isInitialized = true;
+  }
+
+  /// Safely stop beaconing, handling XPC connection errors
+  Future<void> _safeStopBeaconing() async {
+    if (!_isAdvertising) return;
+    _isAdvertising = false;
+
+    try {
+      await _blePeripheral?.stop();
+      debugPrint('BLE advertising stopped');
+    } catch (e) {
+      // Ignore XPC connection errors - connection is already invalid
+      debugPrint('Error stopping BLE advertising (ignored): $e');
+    }
   }
 
   /// Request all necessary permissions for Bluetooth
@@ -275,6 +300,10 @@ class BluetoothService {
   /// Start BLE advertising (beaconing)
   Future<void> startBeaconing() async {
     if (_isAdvertising) return;
+    if (_blePeripheral == null) {
+      debugPrint('BLE peripheral not initialized');
+      return;
+    }
 
     // Check and request permissions first
     if (!await hasPermissions()) {
@@ -287,7 +316,7 @@ class BluetoothService {
 
     try {
       // Check if peripheral mode is supported
-      final isSupported = await _blePeripheral.isSupported;
+      final isSupported = await _blePeripheral!.isSupported;
       if (!isSupported) {
         debugPrint('BLE Peripheral mode not supported on this device');
         return;
@@ -301,7 +330,7 @@ class BluetoothService {
       );
 
       // Start advertising
-      await _blePeripheral.start(
+      await _blePeripheral!.start(
         advertiseData: advertiseData,
         advertiseSettings: AdvertiseSettings(
           advertiseMode: AdvertiseMode.advertiseModeLowLatency,
@@ -316,20 +345,18 @@ class BluetoothService {
     } catch (e) {
       debugPrint('Error starting BLE advertising: $e');
       _isAdvertising = false;
+
+      // If XPC connection is invalid, try to recreate the peripheral
+      if (e.toString().contains('XPC') || e.toString().contains('invalid')) {
+        debugPrint('Recreating BLE peripheral due to connection error');
+        _blePeripheral = FlutterBlePeripheral();
+      }
     }
   }
 
   /// Stop BLE advertising
   Future<void> stopBeaconing() async {
-    if (!_isAdvertising) return;
-
-    try {
-      await _blePeripheral.stop();
-      _isAdvertising = false;
-      debugPrint('BLE advertising stopped');
-    } catch (e) {
-      debugPrint('Error stopping BLE advertising: $e');
-    }
+    await _safeStopBeaconing();
   }
 
   bool get isScanning => _isScanning || _continuousScanning;
@@ -338,22 +365,27 @@ class BluetoothService {
   /// Pause scanning (for app lifecycle)
   Future<void> pause() async {
     await stopScanning();
-    await stopBeaconing();
+    await _safeStopBeaconing();
   }
 
   /// Resume scanning (for app lifecycle)
   Future<void> resume() async {
-    // Let the caller decide whether to resume scanning/beaconing
+    // Recreate peripheral on resume to handle stale XPC connections
+    if (Platform.isIOS) {
+      _blePeripheral = FlutterBlePeripheral();
+    }
   }
 
   Future<void> dispose() async {
     _stopScanLoop();
-    await stopBeaconing();
+    await _safeStopBeaconing();
     await _adapterSubscription?.cancel();
     _adapterSubscription = null;
     await _bluetoothStateController?.close();
     await _karrassDetectedController?.close();
     _bluetoothStateController = null;
     _karrassDetectedController = null;
+    _blePeripheral = null;
+    _isInitialized = false;
   }
 }

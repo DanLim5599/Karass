@@ -51,6 +51,14 @@ class AppProvider extends ChangeNotifier {
   NotificationService get notifications => _notifications;
 
   Future<void> init() async {
+    // Cancel any existing subscriptions first (safety for reinit)
+    await _bluetoothSubscription?.cancel();
+    await _karassSubscription?.cancel();
+    await _tokenRefreshSubscription?.cancel();
+    _bluetoothSubscription = null;
+    _karassSubscription = null;
+    _tokenRefreshSubscription = null;
+
     try {
       await _storage.init();
     } catch (e) {
