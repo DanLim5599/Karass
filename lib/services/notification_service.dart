@@ -65,6 +65,11 @@ class NotificationService {
   StreamController<NotificationPayload>? _notificationController;
   StreamController<String>? _tokenRefreshController;
 
+  // Store Firebase listener subscriptions to prevent duplicates
+  StreamSubscription<String>? _tokenRefreshSubscription;
+  StreamSubscription<RemoteMessage>? _foregroundMessageSubscription;
+  StreamSubscription<RemoteMessage>? _messageOpenedSubscription;
+
   Stream<NotificationPayload> get notificationStream {
     _ensureControllersOpen();
     return _notificationController!.stream;
@@ -98,7 +103,7 @@ class NotificationService {
 
     if (_isInitialized) return;
 
-    // Set up background message handler
+    // Set up background message handler (safe to call multiple times)
     FirebaseMessaging.onBackgroundMessage(firebaseMessagingBackgroundHandler);
 
     // Request permissions
@@ -110,8 +115,13 @@ class NotificationService {
     // Get FCM token
     await _getFcmToken();
 
+    // Cancel any existing subscriptions before creating new ones
+    await _tokenRefreshSubscription?.cancel();
+    await _foregroundMessageSubscription?.cancel();
+    await _messageOpenedSubscription?.cancel();
+
     // Listen for token refresh and notify listeners
-    _fcm.onTokenRefresh.listen((token) {
+    _tokenRefreshSubscription = _fcm.onTokenRefresh.listen((token) {
       _fcmToken = token;
       debugPrint('FCM Token refreshed');
       _ensureControllersOpen();
@@ -119,10 +129,10 @@ class NotificationService {
     });
 
     // Handle foreground messages
-    FirebaseMessaging.onMessage.listen(_handleForegroundMessage);
+    _foregroundMessageSubscription = FirebaseMessaging.onMessage.listen(_handleForegroundMessage);
 
     // Handle notification taps when app is in background
-    FirebaseMessaging.onMessageOpenedApp.listen(_handleNotificationTap);
+    _messageOpenedSubscription = FirebaseMessaging.onMessageOpenedApp.listen(_handleNotificationTap);
 
     // Check for initial message (app opened from terminated state via notification)
     final initialMessage = await _fcm.getInitialMessage();
@@ -409,11 +419,21 @@ class NotificationService {
     debugPrint('Unsubscribed from topic: $topic');
   }
 
-  void dispose() {
-    _notificationController?.close();
-    _tokenRefreshController?.close();
+  Future<void> dispose() async {
+    // Cancel Firebase subscriptions
+    await _tokenRefreshSubscription?.cancel();
+    await _foregroundMessageSubscription?.cancel();
+    await _messageOpenedSubscription?.cancel();
+    _tokenRefreshSubscription = null;
+    _foregroundMessageSubscription = null;
+    _messageOpenedSubscription = null;
+
+    // Close stream controllers
+    await _notificationController?.close();
+    await _tokenRefreshController?.close();
     _notificationController = null;
     _tokenRefreshController = null;
+
     // Reset initialization flag so it can reinitialize if needed
     _isInitialized = false;
   }

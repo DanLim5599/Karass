@@ -9,7 +9,10 @@ import FirebaseMessaging
     _ application: UIApplication,
     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
   ) -> Bool {
-    FirebaseApp.configure()
+    // Only configure Firebase if not already configured (prevents crash on app reopen)
+    if FirebaseApp.app() == nil {
+      FirebaseApp.configure()
+    }
 
     // Request notification permissions
     UNUserNotificationCenter.current().delegate = self

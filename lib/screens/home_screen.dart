@@ -49,6 +49,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   }
 
   void _recheckAnnouncementExpiry() {
+    if (!mounted) return;
     if (_showDustAnimation && _currentAnnouncementExpiry != null) {
       if (_currentAnnouncementExpiry!.isBefore(DateTime.now())) {
         // Event time has passed, hide the announcement
