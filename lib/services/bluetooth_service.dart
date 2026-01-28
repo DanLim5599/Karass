@@ -51,8 +51,10 @@ class BluetoothService {
     _isScanning = false;
     _continuousScanning = false;
 
-    // Create fresh BLE peripheral instance to avoid stale XPC connections on iOS
-    _blePeripheral = FlutterBlePeripheral();
+    // Don't create FlutterBlePeripheral eagerly - it registers an onActivityResult
+    // handler that can crash with "Reply already submitted" if an unrelated activity
+    // (e.g., OAuth browser) returns a result. Create it lazily in startBeaconing().
+    _blePeripheral = null;
 
     // Cancel any existing subscription before creating new one
     await _adapterSubscription?.cancel();
@@ -300,10 +302,10 @@ class BluetoothService {
   /// Start BLE advertising (beaconing)
   Future<void> startBeaconing() async {
     if (_isAdvertising) return;
-    if (_blePeripheral == null) {
-      debugPrint('BLE peripheral not initialized');
-      return;
-    }
+
+    // Lazily create BLE peripheral instance to avoid crash from early
+    // onActivityResult handling when no beaconing is needed
+    _blePeripheral ??= FlutterBlePeripheral();
 
     // Check and request permissions first
     if (!await hasPermissions()) {
@@ -369,11 +371,39 @@ class BluetoothService {
   }
 
   /// Resume scanning (for app lifecycle)
+  /// Reinitializes BLE components that may have become stale on iOS
   Future<void> resume() async {
-    // Recreate peripheral on resume to handle stale XPC connections
-    if (Platform.isIOS) {
+    debugPrint('BluetoothService: Resuming...');
+
+    // Recreate peripheral on resume to handle stale XPC connections on iOS
+    // Only recreate if it was previously created (user was beaconing)
+    if (Platform.isIOS && _blePeripheral != null) {
       _blePeripheral = FlutterBlePeripheral();
     }
+
+    // Recreate adapter state listener if needed
+    if (_adapterSubscription == null) {
+      _ensureControllersOpen();
+      _adapterSubscription = FlutterBluePlus.adapterState.listen(
+        (state) {
+          final isOn = state == BluetoothAdapterState.on;
+          _ensureControllersOpen();
+          _bluetoothStateController?.add(isOn);
+
+          if (!isOn) {
+            _stopScanLoop();
+            _safeStopBeaconing();
+          }
+        },
+        onError: (e) {
+          debugPrint('Bluetooth adapter state error: $e');
+          _ensureControllersOpen();
+          _bluetoothStateController?.add(false);
+        },
+      );
+    }
+
+    debugPrint('BluetoothService: Resumed');
   }
 
   Future<void> dispose() async {

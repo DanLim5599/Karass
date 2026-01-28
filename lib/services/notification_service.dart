@@ -96,6 +96,14 @@ class NotificationService {
 
   bool _isInitialized = false;
 
+  /// Reinitialize the service - call when app resumes from terminated state on iOS
+  Future<void> reinitialize() async {
+    debugPrint('NotificationService: Reinitializing...');
+    await dispose();
+    await init();
+    debugPrint('NotificationService: Reinitialized successfully');
+  }
+
   /// Initialize the notification service
   Future<void> init() async {
     // Ensure controllers are open even if already initialized

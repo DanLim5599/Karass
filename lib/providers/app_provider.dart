@@ -7,6 +7,7 @@ import '../services/haptic_service.dart';
 import '../services/api_service.dart';
 import '../services/notification_service.dart';
 import '../services/twitter_auth_service.dart';
+import '../services/github_auth_service.dart';
 
 export '../services/api_service.dart' show Announcement;
 
@@ -17,13 +18,14 @@ class AuthResult {
   AuthResult({required this.success, required this.message});
 }
 
-class AppProvider extends ChangeNotifier {
+class AppProvider extends ChangeNotifier with WidgetsBindingObserver {
   final StorageService _storage = StorageService();
   final BluetoothService _bluetooth = BluetoothService();
   final HapticService _haptic = HapticService();
   final ApiService _api = ApiService();
   final NotificationService _notifications = NotificationService();
   final TwitterAuthService _twitterAuth = TwitterAuthService();
+  final GitHubAuthService _githubAuth = GitHubAuthService();
 
   AppStage _stage = AppStage.splash;
   UserData _userData = const UserData();
@@ -32,6 +34,9 @@ class AppProvider extends ChangeNotifier {
   bool _isInitialized = false;
   String? _userId;
   List<Announcement> _announcements = [];
+
+  // Track app lifecycle state to handle iOS app termination/reopen
+  AppLifecycleState? _lastLifecycleState;
 
   StreamSubscription<bool>? _bluetoothSubscription;
   StreamSubscription<bool>? _karassSubscription;
@@ -51,6 +56,9 @@ class AppProvider extends ChangeNotifier {
   NotificationService get notifications => _notifications;
 
   Future<void> init() async {
+    // Register for app lifecycle events
+    WidgetsBinding.instance.addObserver(this);
+
     // Cancel any existing subscriptions first (safety for reinit)
     await _bluetoothSubscription?.cancel();
     await _karassSubscription?.cancel();
@@ -282,6 +290,38 @@ class AppProvider extends ChangeNotifier {
     return AuthResult(success: result.success, message: result.message);
   }
 
+  /// Login with GitHub OAuth
+  Future<AuthResult> loginWithGitHub() async {
+    final result = await _githubAuth.authenticate();
+
+    if (result.success && result.user != null) {
+      _userId = result.user!.id;
+      _userData = UserData(
+        email: result.user!.email,
+        username: result.user!.username,
+        twitterHandle: null,
+        isAdmin: result.user!.isAdmin,
+      );
+
+      // Store the JWT token
+      if (result.token != null) {
+        await _api.setToken(result.token);
+      }
+
+      await _storage.saveUserData(_userData);
+      await _storage.setUserId(_userId);
+      await _storage.setHasCompletedSignUp(true);
+
+      await _haptic.mediumImpact();
+
+      // After GitHub login, go to waiting for beacon stage
+      _stage = AppStage.waitingForBeacon;
+      notifyListeners();
+    }
+
+    return AuthResult(success: result.success, message: result.message);
+  }
+
   /// Logout - clears all stored data and tokens
   Future<void> logout() async {
     // Clear JWT token
@@ -410,8 +450,86 @@ class AppProvider extends ChangeNotifier {
     }
   }
 
+  /// Handle app lifecycle changes - critical for iOS crash prevention
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    debugPrint('AppProvider: Lifecycle state changed to $state');
+
+    // Track if coming from terminated/detached state
+    final wasDetached = _lastLifecycleState == AppLifecycleState.detached;
+    _lastLifecycleState = state;
+
+    switch (state) {
+      case AppLifecycleState.resumed:
+        // App came back to foreground
+        _handleAppResumed(wasDetached);
+        break;
+      case AppLifecycleState.inactive:
+        // App is inactive (transitioning)
+        break;
+      case AppLifecycleState.paused:
+        // App went to background
+        _handleAppPaused();
+        break;
+      case AppLifecycleState.detached:
+        // App is being terminated (iOS)
+        _handleAppDetached();
+        break;
+      case AppLifecycleState.hidden:
+        // App is hidden (macOS/desktop)
+        break;
+    }
+  }
+
+  /// Handle app resuming from background or terminated state
+  Future<void> _handleAppResumed(bool wasDetached) async {
+    debugPrint('AppProvider: Handling app resume (wasDetached: $wasDetached)');
+
+    try {
+      // Reinitialize Bluetooth service to handle stale XPC connections on iOS
+      await _bluetooth.resume();
+
+      // Reinitialize notification service to recreate Firebase listeners
+      // This is critical for iOS where listeners become stale after termination
+      await _notifications.reinitialize();
+
+      // Re-subscribe to token refresh stream after reinitialization
+      await _tokenRefreshSubscription?.cancel();
+      _tokenRefreshSubscription = _notifications.tokenRefreshStream.listen(
+        (token) {
+          _updateFcmTokenOnBackend(token);
+        },
+        onError: (e) => debugPrint('Token refresh stream error: $e'),
+      );
+
+      // Check Bluetooth state again
+      _isBluetoothOn = await _bluetooth.isBluetoothOn();
+      notifyListeners();
+
+      debugPrint('AppProvider: App resume handling completed');
+    } catch (e) {
+      debugPrint('AppProvider: Error during app resume: $e');
+    }
+  }
+
+  /// Handle app going to background
+  Future<void> _handleAppPaused() async {
+    debugPrint('AppProvider: Handling app pause');
+    await _bluetooth.pause();
+  }
+
+  /// Handle app being terminated (iOS)
+  Future<void> _handleAppDetached() async {
+    debugPrint('AppProvider: Handling app detach');
+    // Clean up resources before termination
+    await _bluetooth.pause();
+  }
+
   @override
   void dispose() {
+    // Remove lifecycle observer
+    WidgetsBinding.instance.removeObserver(this);
+
     _bluetoothSubscription?.cancel();
     _karassSubscription?.cancel();
     _tokenRefreshSubscription?.cancel();

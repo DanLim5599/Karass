@@ -142,9 +142,13 @@ class _CreateAccountViewState extends State<_CreateAccountView> {
 
   bool _isLoading = false;
   bool _isTwitterLoading = false;
+  bool _isGitHubLoading = false;
   bool _obscurePassword = true;
   bool _obscureConfirmPassword = true;
   String? _errorMessage;
+
+  // Helper to check if any auth is in progress
+  bool get _isAnyAuthLoading => _isLoading || _isTwitterLoading || _isGitHubLoading;
 
   @override
   void dispose() {
@@ -157,6 +161,8 @@ class _CreateAccountViewState extends State<_CreateAccountView> {
   }
 
   Future<void> _handleTwitterSignIn() async {
+    if (_isAnyAuthLoading) return;  // Prevent concurrent auth attempts
+
     setState(() {
       _isTwitterLoading = true;
       _errorMessage = null;
@@ -175,7 +181,29 @@ class _CreateAccountViewState extends State<_CreateAccountView> {
     }
   }
 
+  Future<void> _handleGitHubSignIn() async {
+    if (_isAnyAuthLoading) return;  // Prevent concurrent auth attempts
+
+    setState(() {
+      _isGitHubLoading = true;
+      _errorMessage = null;
+    });
+
+    try {
+      final result = await context.read<AppProvider>().loginWithGitHub();
+
+      if (!result.success && mounted) {
+        setState(() => _errorMessage = result.message);
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isGitHubLoading = false);
+      }
+    }
+  }
+
   Future<void> _submit() async {
+    if (_isAnyAuthLoading) return;  // Prevent concurrent auth attempts
     if (!_formKey.currentState!.validate()) return;
 
     setState(() {
@@ -258,7 +286,7 @@ class _CreateAccountViewState extends State<_CreateAccountView> {
 
             // Twitter Sign In Button (at top)
             OutlinedButton.icon(
-              onPressed: _isTwitterLoading ? null : _handleTwitterSignIn,
+              onPressed: _isAnyAuthLoading ? null : _handleTwitterSignIn,
               icon: _isTwitterLoading
                   ? SizedBox(
                       height: 20,
@@ -276,7 +304,41 @@ class _CreateAccountViewState extends State<_CreateAccountView> {
                       ),
                     ),
               label: Text(
-                _isTwitterLoading ? 'Connecting...' : 'Sign up with X',
+                _isTwitterLoading ? 'Connecting...' : 'Log in with X',
+                style: const TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: AppTheme.textPrimary,
+                side: const BorderSide(color: AppTheme.primary, width: 1.5),
+                padding: const EdgeInsets.symmetric(vertical: 16),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(8),
+                ),
+              ),
+            ),
+            const SizedBox(height: 12),
+
+            // GitHub Sign In Button
+            OutlinedButton.icon(
+              onPressed: _isAnyAuthLoading ? null : _handleGitHubSignIn,
+              icon: _isGitHubLoading
+                  ? SizedBox(
+                      height: 20,
+                      width: 20,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        valueColor: AlwaysStoppedAnimation<Color>(AppTheme.textSecondary),
+                      ),
+                    )
+                  : const Icon(
+                      Icons.code,
+                      size: 20,
+                    ),
+              label: Text(
+                _isGitHubLoading ? 'Connecting...' : 'Log in with GitHub',
                 style: const TextStyle(
                   fontSize: 16,
                   fontWeight: FontWeight.w500,
@@ -400,7 +462,7 @@ class _CreateAccountViewState extends State<_CreateAccountView> {
 
             // Submit
             OutlinedButton(
-              onPressed: _isLoading ? null : _submit,
+              onPressed: _isAnyAuthLoading ? null : _submit,
               style: OutlinedButton.styleFrom(
                 foregroundColor: AppTheme.textPrimary,
                 side: const BorderSide(color: AppTheme.primary, width: 1.5),
@@ -502,8 +564,12 @@ class _LoginViewState extends State<_LoginView> {
 
   bool _isLoading = false;
   bool _isTwitterLoading = false;
+  bool _isGitHubLoading = false;
   bool _obscurePassword = true;
   String? _errorMessage;
+
+  // Helper to check if any auth is in progress
+  bool get _isAnyAuthLoading => _isLoading || _isTwitterLoading || _isGitHubLoading;
 
   @override
   void dispose() {
@@ -513,6 +579,8 @@ class _LoginViewState extends State<_LoginView> {
   }
 
   Future<void> _handleTwitterSignIn() async {
+    if (_isAnyAuthLoading) return;  // Prevent concurrent auth attempts
+
     setState(() {
       _isTwitterLoading = true;
       _errorMessage = null;
@@ -531,7 +599,29 @@ class _LoginViewState extends State<_LoginView> {
     }
   }
 
+  Future<void> _handleGitHubSignIn() async {
+    if (_isAnyAuthLoading) return;  // Prevent concurrent auth attempts
+
+    setState(() {
+      _isGitHubLoading = true;
+      _errorMessage = null;
+    });
+
+    try {
+      final result = await context.read<AppProvider>().loginWithGitHub();
+
+      if (!result.success && mounted) {
+        setState(() => _errorMessage = result.message);
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isGitHubLoading = false);
+      }
+    }
+  }
+
   Future<void> _submit() async {
+    if (_isAnyAuthLoading) return;  // Prevent concurrent auth attempts
     if (!_formKey.currentState!.validate()) return;
 
     setState(() {
@@ -610,7 +700,7 @@ class _LoginViewState extends State<_LoginView> {
 
             // Twitter Sign In Button
             OutlinedButton.icon(
-              onPressed: _isTwitterLoading ? null : _handleTwitterSignIn,
+              onPressed: _isAnyAuthLoading ? null : _handleTwitterSignIn,
               icon: _isTwitterLoading
                   ? SizedBox(
                       height: 20,
@@ -629,6 +719,40 @@ class _LoginViewState extends State<_LoginView> {
                     ),
               label: Text(
                 _isTwitterLoading ? 'Connecting...' : 'Log in with X',
+                style: const TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: AppTheme.textPrimary,
+                side: const BorderSide(color: AppTheme.primary, width: 1.5),
+                padding: const EdgeInsets.symmetric(vertical: 16),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(8),
+                ),
+              ),
+            ),
+            const SizedBox(height: 12),
+
+            // GitHub Sign In Button
+            OutlinedButton.icon(
+              onPressed: _isAnyAuthLoading ? null : _handleGitHubSignIn,
+              icon: _isGitHubLoading
+                  ? SizedBox(
+                      height: 20,
+                      width: 20,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        valueColor: AlwaysStoppedAnimation<Color>(AppTheme.textSecondary),
+                      ),
+                    )
+                  : const Icon(
+                      Icons.code,
+                      size: 20,
+                    ),
+              label: Text(
+                _isGitHubLoading ? 'Connecting...' : 'Log in with GitHub',
                 style: const TextStyle(
                   fontSize: 16,
                   fontWeight: FontWeight.w500,
@@ -707,7 +831,7 @@ class _LoginViewState extends State<_LoginView> {
 
             // Submit
             OutlinedButton(
-              onPressed: _isLoading ? null : _submit,
+              onPressed: _isAnyAuthLoading ? null : _submit,
               style: OutlinedButton.styleFrom(
                 foregroundColor: AppTheme.textPrimary,
                 side: const BorderSide(color: AppTheme.primary, width: 1.5),

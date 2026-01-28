@@ -1,10 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
-import 'package:provider/provider.dart';
 import 'package:karass/services/api_service.dart';
-import 'package:karass/providers/app_provider.dart';
-import 'package:karass/screens/home_screen.dart';
 import 'package:karass/models/app_state.dart';
 
 // Mock classes
@@ -15,7 +12,6 @@ void main() {
     test('should create Announcement from JSON', () {
       final json = {
         'id': '1',
-        'title': 'Test Announcement',
         'message': 'This is a test message',
         'createdAt': '2024-01-15T10:30:00.000Z',
         'createdBy': 'admin_user',
@@ -24,7 +20,6 @@ void main() {
       final announcement = Announcement.fromJson(json);
 
       expect(announcement.id, '1');
-      expect(announcement.title, 'Test Announcement');
       expect(announcement.message, 'This is a test message');
       expect(announcement.createdBy, 'admin_user');
       expect(announcement.createdAt, isA<DateTime>());
@@ -33,14 +28,13 @@ void main() {
     test('should handle missing optional fields', () {
       final json = {
         'id': '2',
-        'title': 'No Author',
         'message': 'Message without author',
       };
 
       final announcement = Announcement.fromJson(json);
 
       expect(announcement.id, '2');
-      expect(announcement.title, 'No Author');
+      expect(announcement.message, 'Message without author');
       expect(announcement.createdBy, isNull);
     });
 
@@ -50,7 +44,6 @@ void main() {
       final announcement = Announcement.fromJson(json);
 
       expect(announcement.id, '');
-      expect(announcement.title, '');
       expect(announcement.message, '');
       expect(announcement.createdBy, isNull);
     });

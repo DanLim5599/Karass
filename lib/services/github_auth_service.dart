@@ -1,14 +1,14 @@
 import 'base_oauth_service.dart';
 
-/// Result of Twitter authentication
-class TwitterAuthResult {
+/// Result of GitHub authentication
+class GitHubAuthResult {
   final bool success;
   final String message;
   final String? token;
-  final TwitterUserResponse? user;
+  final GitHubUserResponse? user;
   final bool isNewUser;
 
-  TwitterAuthResult({
+  GitHubAuthResult({
     required this.success,
     required this.message,
     this.token,
@@ -17,67 +17,67 @@ class TwitterAuthResult {
   });
 
   /// Create from base OAuthResult
-  factory TwitterAuthResult.fromOAuthResult(OAuthResult result) {
-    return TwitterAuthResult(
+  factory GitHubAuthResult.fromOAuthResult(OAuthResult result) {
+    return GitHubAuthResult(
       success: result.success,
       message: result.message,
       token: result.token,
       user: result.userData != null
-          ? TwitterUserResponse.fromJson(result.userData!)
+          ? GitHubUserResponse.fromJson(result.userData!)
           : null,
       isNewUser: result.isNewUser,
     );
   }
 }
 
-/// Twitter user data returned from authentication
-class TwitterUserResponse {
+/// GitHub user data returned from authentication
+class GitHubUserResponse {
   final String id;
   final String? email;
   final String username;
-  final String? twitterHandle;
-  final String? twitterId;
+  final String? githubHandle;
+  final String? githubId;
   final bool isApproved;
   final bool isAdmin;
 
-  TwitterUserResponse({
+  GitHubUserResponse({
     required this.id,
     this.email,
     required this.username,
-    this.twitterHandle,
-    this.twitterId,
+    this.githubHandle,
+    this.githubId,
     required this.isApproved,
     required this.isAdmin,
   });
 
-  factory TwitterUserResponse.fromJson(Map<String, dynamic> json) {
-    return TwitterUserResponse(
+  factory GitHubUserResponse.fromJson(Map<String, dynamic> json) {
+    return GitHubUserResponse(
       id: json['id'] ?? '',
       email: json['email'],
       username: json['username'] ?? '',
-      twitterHandle: json['twitterHandle'],
-      twitterId: json['twitterId'],
+      githubHandle: json['githubHandle'],
+      githubId: json['githubId'],
       isApproved: json['isApproved'] ?? false,
       isAdmin: json['isAdmin'] ?? false,
     );
   }
 }
 
-/// Service to handle Twitter/X OAuth authentication
-class TwitterAuthService extends BaseOAuthService {
+/// Service to handle GitHub OAuth authentication
+class GitHubAuthService extends BaseOAuthService {
   @override
-  String get providerName => 'TWITTER';
+  String get providerName => 'GITHUB';
 
   @override
-  String get initEndpoint => '/auth/twitter/init';
+  String get initEndpoint => '/auth/github/init';
 
   @override
-  String get callbackEndpoint => '/auth/twitter/callback';
+  String get callbackEndpoint => '/auth/github/callback';
 
-  /// Initiates the Twitter OAuth flow
+  /// Initiates the GitHub OAuth flow
   /// Returns the authentication result with user data and JWT token
-  Future<TwitterAuthResult> authenticate() async {
+  Future<GitHubAuthResult> authenticate() async {
     final result = await performOAuthFlow();
-    return TwitterAuthResult.fromOAuthResult(result);
+    return GitHubAuthResult.fromOAuthResult(result);
   }
 }

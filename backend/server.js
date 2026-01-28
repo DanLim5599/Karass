@@ -48,6 +48,14 @@ const TWITTER_CLIENT_ID = process.env.TWITTER_CLIENT_ID;
 const TWITTER_CLIENT_SECRET = process.env.TWITTER_CLIENT_SECRET;
 const TWITTER_CALLBACK_URL = 'karass://callback';
 
+// GitHub OAuth Configuration
+const GITHUB_CLIENT_ID = process.env.GITHUB_CLIENT_ID;
+const GITHUB_CLIENT_SECRET = process.env.GITHUB_CLIENT_SECRET;
+// GitHub requires HTTP/HTTPS callback URL (not custom schemes)
+// Use GITHUB_REDIRECT_URL env var for production, or auto-detect for local dev
+const GITHUB_REDIRECT_BASE = process.env.GITHUB_REDIRECT_URL || `http://localhost:${process.env.PORT || 3000}`;
+const GITHUB_CALLBACK_URL = `${GITHUB_REDIRECT_BASE}/api/auth/github/web-callback`;
+
 // In-memory store for PKCE verifiers (use Redis in production)
 const pkceStore = new Map();
 const PKCE_TTL = 10 * 60 * 1000; // 10 minutes
@@ -106,6 +114,11 @@ const pool = new Pool({
   idleTimeoutMillis: 30000,   // Close idle connections after 30s
   connectionTimeoutMillis: 5000,  // Fail connection after 5s
   maxUses: 7500               // Close connection after 7500 uses
+});
+
+// Handle pool errors to prevent unhandled crashes (e.g., Neon dropping idle connections)
+pool.on('error', (err) => {
+  console.error('Unexpected database pool error:', err.message);
 });
 
 // Initialize admin middleware with database pool
@@ -212,7 +225,7 @@ app.post('/api/auth/login', authRateLimit, async (req, res) => {
     if (!user.password) {
       return res.status(400).json({
         success: false,
-        message: 'Please use Twitter/X to sign in'
+        message: 'Please use Twitter/X or GitHub to sign in'
       });
     }
 
@@ -543,6 +556,305 @@ app.post('/api/auth/twitter/link', requireAuth, async (req, res) => {
   }
 });
 
+// ============================================
+// GitHub OAuth 2.0 Endpoints
+// ============================================
+
+// Initialize GitHub OAuth flow - generates PKCE challenge
+app.get('/api/auth/github/init', authRateLimit, async (req, res) => {
+  try {
+    if (!GITHUB_CLIENT_ID) {
+      return res.status(500).json({
+        success: false,
+        message: 'GitHub OAuth not configured'
+      });
+    }
+
+    // Generate PKCE code verifier (43-128 chars, URL-safe)
+    const codeVerifier = crypto.randomBytes(32).toString('base64url');
+
+    // Generate code challenge (SHA256 hash of verifier, base64url encoded)
+    const codeChallenge = crypto
+      .createHash('sha256')
+      .update(codeVerifier)
+      .digest('base64url');
+
+    // Generate state parameter for CSRF protection
+    const state = crypto.randomBytes(16).toString('hex');
+
+    // Store code verifier temporarily
+    pkceStore.set(state, {
+      codeVerifier,
+      createdAt: Date.now()
+    });
+
+    // Build GitHub OAuth URL
+    const params = new URLSearchParams({
+      client_id: GITHUB_CLIENT_ID,
+      redirect_uri: GITHUB_CALLBACK_URL,
+      scope: 'read:user user:email',
+      state: state,
+      code_challenge: codeChallenge,
+      code_challenge_method: 'S256'
+    });
+
+    const authUrl = `https://github.com/login/oauth/authorize?${params.toString()}`;
+
+    res.json({
+      success: true,
+      authUrl,
+      state,
+      codeVerifier
+    });
+  } catch (error) {
+    console.error('GitHub init error:', error);
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+});
+
+// GitHub OAuth web callback - receives redirect from GitHub, redirects to app
+// This is needed because GitHub only supports HTTP/HTTPS redirect URLs, not custom schemes
+app.get('/api/auth/github/web-callback', async (req, res) => {
+  try {
+    const { code, state, error, error_description } = req.query;
+
+    // Build the app redirect URL
+    const appRedirectParams = new URLSearchParams();
+
+    if (error) {
+      appRedirectParams.set('error', error);
+      if (error_description) {
+        appRedirectParams.set('error_description', error_description);
+      }
+    } else if (code && state) {
+      appRedirectParams.set('code', code);
+      appRedirectParams.set('state', state);
+    } else {
+      appRedirectParams.set('error', 'missing_params');
+      appRedirectParams.set('error_description', 'Missing code or state parameter');
+    }
+
+    // Redirect to the app's custom URL scheme
+    const appRedirectUrl = `karass://callback?${appRedirectParams.toString()}`;
+    console.log('GitHub OAuth: Redirecting to app:', appRedirectUrl);
+
+    // Send HTML that redirects to the app scheme (more reliable than HTTP redirect)
+    res.send(`
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <title>Redirecting to Karass...</title>
+          <meta http-equiv="refresh" content="0;url=${appRedirectUrl}">
+        </head>
+        <body>
+          <p>Redirecting to Karass app...</p>
+          <p>If you are not redirected automatically, <a href="${appRedirectUrl}">click here</a>.</p>
+          <script>window.location.href = "${appRedirectUrl}";</script>
+        </body>
+      </html>
+    `);
+  } catch (error) {
+    console.error('GitHub web callback error:', error);
+    res.status(500).send('Error processing GitHub callback');
+  }
+});
+
+// GitHub OAuth callback - exchanges code for tokens
+app.post('/api/auth/github/callback', authRateLimit, async (req, res) => {
+  try {
+    const { code, state, codeVerifier } = req.body;
+
+    if (!code || !state || !codeVerifier) {
+      return res.status(400).json({
+        success: false,
+        message: 'Missing required parameters'
+      });
+    }
+
+    if (!GITHUB_CLIENT_ID || !GITHUB_CLIENT_SECRET) {
+      return res.status(500).json({
+        success: false,
+        message: 'GitHub OAuth not configured'
+      });
+    }
+
+    // Validate state against stored PKCE data (REQUIRED for CSRF protection)
+    const storedData = pkceStore.get(state);
+    if (!storedData) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid or expired state parameter. Please try again.'
+      });
+    }
+
+    // Verify code verifier matches stored value (prevents replay attacks)
+    if (storedData.codeVerifier !== codeVerifier) {
+      pkceStore.delete(state);
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid code verifier. Please try again.'
+      });
+    }
+    pkceStore.delete(state); // Clean up after validation
+
+    // Exchange authorization code for access token (with PKCE code_verifier)
+    const tokenResponse = await axios.post(
+      'https://github.com/login/oauth/access_token',
+      {
+        client_id: GITHUB_CLIENT_ID,
+        client_secret: GITHUB_CLIENT_SECRET,
+        code: code,
+        redirect_uri: GITHUB_CALLBACK_URL,
+        code_verifier: codeVerifier  // Required for PKCE
+      },
+      {
+        headers: {
+          'Accept': 'application/json',
+          'Content-Type': 'application/json'
+        },
+        timeout: 10000  // 10 second timeout
+      }
+    );
+
+    const { access_token, error, error_description } = tokenResponse.data;
+
+    if (error || !access_token) {
+      console.error('GitHub token error:', error, error_description);
+      return res.status(400).json({
+        success: false,
+        message: error_description || 'Failed to get access token from GitHub'
+      });
+    }
+
+    // Fetch GitHub user profile
+    const userResponse = await axios.get('https://api.github.com/user', {
+      headers: {
+        'Authorization': `Bearer ${access_token}`,
+        'Accept': 'application/vnd.github.v3+json',
+        'User-Agent': 'Karass-App'  // GitHub API requires User-Agent
+      },
+      timeout: 10000  // 10 second timeout
+    });
+
+    const githubUser = userResponse.data;
+    const githubId = String(githubUser.id);
+    // Sanitize GitHub username: only allow alphanumeric, hyphens (GitHub's own rules)
+    const githubUsername = (githubUser.login || '').replace(/[^a-zA-Z0-9-]/g, '').substring(0, 30);
+    const githubEmail = githubUser.email;
+
+    if (!githubId || !githubUsername) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid GitHub user data received'
+      });
+    }
+
+    // Check if user exists by github_id
+    let userResult = await pool.query(
+      'SELECT id, email, username, twitter_handle, twitter_id, github_handle, github_id, is_approved, is_admin FROM users WHERE github_id = $1',
+      [githubId]
+    );
+
+    let user;
+    let isNewUser = false;
+
+    if (userResult.rows.length === 0) {
+      // Create new user with GitHub auth using transaction for race condition safety
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+
+        // Generate unique username with retry logic
+        let finalUsername = githubUsername;
+        let suffix = 1;
+        const maxAttempts = 100;
+
+        while (suffix <= maxAttempts) {
+          try {
+            const insertResult = await client.query(
+              `INSERT INTO users (username, email, github_handle, github_id, auth_provider, is_approved, is_admin)
+               VALUES ($1, $2, $3, $4, 'github', TRUE, FALSE)
+               RETURNING id, email, username, twitter_handle, twitter_id, github_handle, github_id, is_approved, is_admin`,
+              [finalUsername, githubEmail || null, `@${githubUsername}`, githubId]
+            );
+            user = insertResult.rows[0];
+            isNewUser = true;
+            await client.query('COMMIT');
+            console.log(`Created new GitHub user: ${finalUsername} (GitHub ID: ${githubId})`);
+            break;
+          } catch (insertError) {
+            // Check if it's a unique constraint violation on username
+            if (insertError.code === '23505' && insertError.constraint && insertError.constraint.includes('username')) {
+              finalUsername = `${githubUsername}${suffix}`;
+              suffix++;
+              continue;
+            }
+            // Check if it's a unique constraint violation on github_id (user already exists)
+            if (insertError.code === '23505' && insertError.constraint && insertError.constraint.includes('github_id')) {
+              await client.query('ROLLBACK');
+              // User was created by another request, fetch them
+              userResult = await pool.query(
+                'SELECT id, email, username, twitter_handle, twitter_id, github_handle, github_id, is_approved, is_admin FROM users WHERE github_id = $1',
+                [githubId]
+              );
+              if (userResult.rows.length > 0) {
+                user = userResult.rows[0];
+                isNewUser = false;
+              }
+              break;
+            }
+            await client.query('ROLLBACK');
+            throw insertError;
+          }
+        }
+
+        if (!user && suffix > maxAttempts) {
+          await client.query('ROLLBACK');
+          return res.status(500).json({
+            success: false,
+            message: 'Failed to generate unique username'
+          });
+        }
+      } catch (txError) {
+        await client.query('ROLLBACK');
+        throw txError;
+      } finally {
+        client.release();
+      }
+    } else {
+      user = userResult.rows[0];
+      console.log(`Existing GitHub user logged in: ${user.username}`);
+    }
+
+    // Generate JWT token
+    const token = generateToken(user);
+
+    res.json({
+      success: true,
+      message: isNewUser ? 'Account created successfully' : 'Login successful',
+      isNewUser,
+      token,
+      user: {
+        id: user.id.toString(),
+        email: user.email || null,
+        username: user.username,
+        twitterHandle: user.twitter_handle,
+        twitterId: user.twitter_id,
+        githubHandle: user.github_handle,
+        githubId: user.github_id,
+        isApproved: user.is_approved,
+        isAdmin: user.is_admin
+      }
+    });
+  } catch (error) {
+    console.error('GitHub callback error:', error.response?.data || error.message);
+    res.status(500).json({
+      success: false,
+      message: error.response?.data?.message || 'GitHub authentication failed'
+    });
+  }
+});
+
 // Admin: Approve user
 app.post('/api/admin/approve/:userId', requireAdmin, async (req, res) => {
   try {
@@ -708,23 +1020,29 @@ app.get('/api/announcements', async (req, res) => {
   }
 });
 
-// Update FCM token for a user
-app.post('/api/users/:userId/fcm-token', async (req, res) => {
+// Update FCM token for a user (requires authentication)
+app.post('/api/users/:userId/fcm-token', requireAuth, async (req, res) => {
   try {
     const { fcmToken } = req.body;
     const userId = sanitizeInt(req.params.userId);
+    const authenticatedUserId = req.user.userId;
 
     if (!userId) {
       return res.status(400).json({ success: false, message: 'Invalid user ID' });
     }
+
+    // Security: Users can only update their own FCM token
+    if (userId !== authenticatedUserId) {
+      return res.status(403).json({ success: false, message: 'Cannot update FCM token for another user' });
+    }
+
     if (!fcmToken || typeof fcmToken !== 'string') {
       return res.status(400).json({ success: false, message: 'FCM token is required' });
     }
 
-    // Verify user exists
-    const userResult = await pool.query('SELECT id FROM users WHERE id = $1', [userId]);
-    if (userResult.rows.length === 0) {
-      return res.status(404).json({ success: false, message: 'User not found' });
+    // FCM token validation - must be a reasonable length
+    if (fcmToken.length > 500) {
+      return res.status(400).json({ success: false, message: 'Invalid FCM token format' });
     }
 
     await pool.query('UPDATE users SET fcm_token = $1 WHERE id = $2', [fcmToken, userId]);
@@ -753,8 +1071,9 @@ let server;
 
 // Initialize DB and start server
 initDb(pool).then(async () => {
-  server = app.listen(PORT, () => {
-    console.log(`Karass backend running on http://localhost:${PORT}`);
+  server = app.listen(PORT, '0.0.0.0', () => {
+    console.log(`Karass backend running on http://0.0.0.0:${PORT}`);
+    console.log('Access from other devices: http://192.168.5.143:' + PORT);
     console.log('Connected to Neon PostgreSQL database');
   });
 }).catch(error => {
