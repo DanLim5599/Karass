@@ -7,7 +7,7 @@ const path = require('path');
 const https = require('https');
 const { google } = require('googleapis');
 
-const FCM_PROJECT_ID = 'karass-b41bc';
+const FCM_PROJECT_ID = process.env.FCM_PROJECT_ID || 'karass-b41bc';
 const SERVICE_ACCOUNT_PATH = path.join(__dirname, '..', 'service-account.json');
 
 /**

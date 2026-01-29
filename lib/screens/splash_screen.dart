@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../config/constants.dart'; // For AnimationConfig
 import '../providers/app_provider.dart';
-import '../widgets/animated_background.dart';
+import '../widgets/iridescent_orb_background.dart';
 import '../widgets/karass_logo.dart';
 
 class SplashScreen extends StatefulWidget {
@@ -60,7 +60,7 @@ class _SplashScreenState extends State<SplashScreen>
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: AnimatedBackground(
+      body: IridescentOrbBackground(
         child: SafeArea(
           child: AnimatedBuilder(
             animation: _controller,

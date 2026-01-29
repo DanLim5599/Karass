@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import '../config/constants.dart';
@@ -182,6 +183,7 @@ class ApiService {
     required String message,
     DateTime? startsAt,
     DateTime? expiresAt,
+    String? imageUrl,
   }) async {
     try {
       final body = <String, dynamic>{
@@ -193,6 +195,9 @@ class ApiService {
       }
       if (expiresAt != null) {
         body['expiresAt'] = expiresAt.toIso8601String();
+      }
+      if (imageUrl != null) {
+        body['imageUrl'] = imageUrl;
       }
 
       final headers = await _getHeaders(includeAuth: true);
@@ -236,6 +241,113 @@ class ApiService {
       return data['success'] ?? false;
     } catch (e) {
       return false;
+    }
+  }
+
+  // ============================================
+  // Beacon Management
+  // ============================================
+
+  /// Get current beacon status for authenticated user
+  Future<bool> getBeaconStatus() async {
+    try {
+      final headers = await _getHeaders(includeAuth: true);
+      final response = await http.get(
+        Uri.parse('$baseUrl/beacon/status'),
+        headers: headers,
+      );
+
+      final data = jsonDecode(response.body);
+      return data['isCurrentBeacon'] ?? false;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  /// Get the current beacon user (public)
+  Future<BeaconUser?> getCurrentBeacon() async {
+    try {
+      final response = await http.get(
+        Uri.parse('$baseUrl/beacon/current'),
+      );
+
+      final data = jsonDecode(response.body);
+      if (data['success'] == true && data['beaconUser'] != null) {
+        return BeaconUser.fromJson(data['beaconUser']);
+      }
+      return null;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  /// Set a user as the current beacon (admin only)
+  Future<bool> setBeaconUser(String userId) async {
+    try {
+      final headers = await _getHeaders(includeAuth: true);
+      final url = '$baseUrl/beacon/set/$userId';
+      debugPrint('Setting beacon user: POST $url');
+
+      final response = await http.post(
+        Uri.parse(url),
+        headers: headers,
+      );
+
+      debugPrint('Beacon response status: ${response.statusCode}');
+      debugPrint('Beacon response body: ${response.body}');
+
+      if (response.statusCode != 200) {
+        debugPrint('Beacon API error: status ${response.statusCode}');
+        return false;
+      }
+
+      final data = jsonDecode(response.body);
+      return data['success'] ?? false;
+    } catch (e) {
+      debugPrint('Beacon API exception: $e');
+      return false;
+    }
+  }
+
+  /// Clear the current beacon (admin only)
+  Future<bool> clearBeacon() async {
+    try {
+      final headers = await _getHeaders(includeAuth: true);
+      final response = await http.post(
+        Uri.parse('$baseUrl/beacon/clear'),
+        headers: headers,
+      );
+
+      final data = jsonDecode(response.body);
+      return data['success'] ?? false;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  // ============================================
+  // Image Upload
+  // ============================================
+
+  /// Upload an image and get its data URL (admin only)
+  Future<String?> uploadImage(List<int> imageBytes, String contentType) async {
+    try {
+      final headers = await _getHeaders(includeAuth: true);
+      headers['Content-Type'] = contentType;
+
+      final response = await http.post(
+        Uri.parse('$baseUrl/upload/image'),
+        headers: headers,
+        body: imageBytes,
+      );
+
+      final data = jsonDecode(response.body);
+      if (data['success'] == true) {
+        return data['imageUrl'];
+      }
+      return null;
+    } catch (e) {
+      return null;
     }
   }
 }
@@ -293,6 +405,7 @@ class Announcement {
   final DateTime? startsAt;
   final DateTime? expiresAt;
   final String? createdBy;
+  final String? imageUrl;
 
   Announcement({
     required this.id,
@@ -301,6 +414,7 @@ class Announcement {
     this.startsAt,
     this.expiresAt,
     this.createdBy,
+    this.imageUrl,
   });
 
   factory Announcement.fromJson(Map<String, dynamic> json) {
@@ -317,6 +431,24 @@ class Announcement {
           ? DateTime.parse(json['expiresAt'])
           : null,
       createdBy: json['createdBy'],
+      imageUrl: json['imageUrl'],
+    );
+  }
+}
+
+class BeaconUser {
+  final String id;
+  final String username;
+
+  BeaconUser({
+    required this.id,
+    required this.username,
+  });
+
+  factory BeaconUser.fromJson(Map<String, dynamic> json) {
+    return BeaconUser(
+      id: json['id'] ?? '',
+      username: json['username'] ?? '',
     );
   }
 }

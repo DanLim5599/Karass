@@ -1,8 +1,13 @@
 enum AppStage {
   splash,            // Stage 1: Initial splash screen with logo
-  signUp,            // Stage 2: Create account / login
-  waitingForBeacon,  // Stage 3: After signup, waiting for beacon detection
-  unlocked,          // Stage 4: Full app access (beacon detected)
+  landing,           // Stage 2: Landing page with "Request an Invitation" / "Login"
+  onboarding1,       // Stage 3a: First onboarding page
+  onboarding2,       // Stage 3b: Second onboarding page
+  createAccount,     // Stage 3c: Create account form
+  login,             // Stage 3d: Login form
+  signUp,            // Legacy - kept for compatibility, redirects to landing
+  waitingForBeacon,  // Stage 4: After signup, waiting for beacon detection
+  unlocked,          // Stage 5: Full app access (beacon detected)
 }
 
 class UserData {
@@ -10,12 +15,14 @@ class UserData {
   final String? username;
   final String? twitterHandle;
   final bool isAdmin;
+  final bool isCurrentBeacon;
 
   const UserData({
     this.email,
     this.username,
     this.twitterHandle,
     this.isAdmin = false,
+    this.isCurrentBeacon = false,
   });
 
   UserData copyWith({
@@ -23,12 +30,14 @@ class UserData {
     String? username,
     String? twitterHandle,
     bool? isAdmin,
+    bool? isCurrentBeacon,
   }) {
     return UserData(
       email: email ?? this.email,
       username: username ?? this.username,
       twitterHandle: twitterHandle ?? this.twitterHandle,
       isAdmin: isAdmin ?? this.isAdmin,
+      isCurrentBeacon: isCurrentBeacon ?? this.isCurrentBeacon,
     );
   }
 

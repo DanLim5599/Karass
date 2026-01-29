@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../config/theme.dart';
 import '../providers/app_provider.dart';
-import '../widgets/animated_background.dart';
+import '../widgets/iridescent_orb_background.dart';
 import '../widgets/karass_logo.dart';
 
 class WaitingForBeaconScreen extends StatefulWidget {
@@ -77,7 +77,7 @@ class _WaitingForBeaconScreenState extends State<WaitingForBeaconScreen>
     final appProvider = context.watch<AppProvider>();
 
     return Scaffold(
-      body: AnimatedBackground(
+      body: IridescentOrbBackground(
         child: SafeArea(
           child: Padding(
             padding: const EdgeInsets.all(24.0),

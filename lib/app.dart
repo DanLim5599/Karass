@@ -4,7 +4,11 @@ import 'config/theme.dart';
 import 'models/app_state.dart';
 import 'providers/app_provider.dart';
 import 'screens/splash_screen.dart';
-import 'screens/signup_screen.dart';
+import 'screens/landing_screen.dart';
+import 'screens/onboarding_page1.dart';
+import 'screens/onboarding_page2.dart';
+import 'screens/create_account_screen.dart';
+import 'screens/login_screen.dart';
 import 'screens/waiting_for_beacon_screen.dart';
 import 'screens/home_screen.dart';
 
@@ -73,8 +77,19 @@ class AppNavigator extends StatelessWidget {
     switch (stage) {
       case AppStage.splash:
         return const SplashScreen(key: ValueKey('splash'));
+      case AppStage.landing:
+        return const LandingScreen(key: ValueKey('landing'));
+      case AppStage.onboarding1:
+        return const OnboardingPage1(key: ValueKey('onboarding1'));
+      case AppStage.onboarding2:
+        return const OnboardingPage2(key: ValueKey('onboarding2'));
+      case AppStage.createAccount:
+        return const CreateAccountScreen(key: ValueKey('createAccount'));
+      case AppStage.login:
+        return const LoginScreen(key: ValueKey('login'));
       case AppStage.signUp:
-        return const SignUpScreen(key: ValueKey('signup'));
+        // Legacy - redirect to landing
+        return const LandingScreen(key: ValueKey('landing'));
       case AppStage.waitingForBeacon:
         return const WaitingForBeaconScreen(key: ValueKey('waiting'));
       case AppStage.unlocked:

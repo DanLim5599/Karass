@@ -4,6 +4,7 @@
 
 list(APPEND FLUTTER_PLUGIN_LIST
   desktop_webview_window
+  file_selector_windows
   firebase_core
   flutter_ble_peripheral
   flutter_blue_plus_winrt

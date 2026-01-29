@@ -47,9 +47,18 @@ app.*.map.json
 /android/app/profile
 /android/app/release
 
-# Backend secrets
+# Backend secrets and dependencies
 backend/.env
+backend/.env.local
+backend/.env.*.local
 backend/node_modules/
+
+# Environment files (all)
+.env
+.env.local
+.env.*.local
+*.env
+!*.env.example
 
 # Screenshots and test images
 *.png
@@ -58,3 +67,4 @@ backend/node_modules/
 !macos/**/*.png
 !web/**/*.png
 !windows/**/*.ico
+guide/

@@ -7,7 +7,7 @@ const crypto = require('crypto');
 const axios = require('axios');
 
 // Import modular utilities and middleware
-const { isValidEmail, isValidUsername, isValidPassword, sanitizeInt } = require('./utils/validation');
+const { isValidEmail, isValidUsername, isValidPassword, sanitizeInt, escapeHtml } = require('./utils/validation');
 const { initDb } = require('./utils/database');
 const { sendPushToTopic } = require('./services/fcm');
 const { securityHeaders } = require('./middleware/security');
@@ -639,17 +639,19 @@ app.get('/api/auth/github/web-callback', async (req, res) => {
     console.log('GitHub OAuth: Redirecting to app:', appRedirectUrl);
 
     // Send HTML that redirects to the app scheme (more reliable than HTTP redirect)
+    // Escape URL to prevent XSS attacks
+    const safeUrl = escapeHtml(appRedirectUrl);
     res.send(`
       <!DOCTYPE html>
       <html>
         <head>
           <title>Redirecting to Karass...</title>
-          <meta http-equiv="refresh" content="0;url=${appRedirectUrl}">
+          <meta http-equiv="refresh" content="0;url=${safeUrl}">
         </head>
         <body>
           <p>Redirecting to Karass app...</p>
-          <p>If you are not redirected automatically, <a href="${appRedirectUrl}">click here</a>.</p>
-          <script>window.location.href = "${appRedirectUrl}";</script>
+          <p>If you are not redirected automatically, <a href="${safeUrl}">click here</a>.</p>
+          <script>window.location.href = ${JSON.stringify(appRedirectUrl)};</script>
         </body>
       </html>
     `);
@@ -928,7 +930,7 @@ app.post('/api/admin/set-admin/:userId', requireAdmin, async (req, res) => {
 // Create announcement (admin only - uses JWT authentication)
 app.post('/api/announcements', requireAdmin, async (req, res) => {
   try {
-    const { message, startsAt, expiresAt } = req.body;
+    const { message, startsAt, expiresAt, imageUrl } = req.body;
     const adminUserId = req.adminId; // Set by requireAdmin middleware
 
     if (!message || typeof message !== 'string' || message.trim().length === 0) {
@@ -936,6 +938,13 @@ app.post('/api/announcements', requireAdmin, async (req, res) => {
     }
     if (message.length > 1000) {
       return res.status(400).json({ success: false, message: 'Message too long (max 1000 chars)' });
+    }
+
+    // Validate imageUrl if provided (must be a data URL or https URL)
+    if (imageUrl && typeof imageUrl === 'string') {
+      if (!imageUrl.startsWith('data:image/') && !imageUrl.startsWith('https://')) {
+        return res.status(400).json({ success: false, message: 'Invalid image URL format' });
+      }
     }
 
     // Validate dates if provided
@@ -955,10 +964,10 @@ app.post('/api/announcements', requireAdmin, async (req, res) => {
     // Create announcement (sanitize message)
     const sanitizedMessage = message.trim();
     const result = await pool.query(
-      `INSERT INTO announcements (message, created_by, starts_at, expires_at)
-       VALUES ($1, $2, $3, $4)
-       RETURNING id, message, created_at, starts_at, expires_at`,
-      [sanitizedMessage, adminUserId, startsAtDate, expiresAtDate]
+      `INSERT INTO announcements (message, created_by, starts_at, expires_at, image_url)
+       VALUES ($1, $2, $3, $4, $5)
+       RETURNING id, message, created_at, starts_at, expires_at, image_url`,
+      [sanitizedMessage, adminUserId, startsAtDate, expiresAtDate, imageUrl || null]
     );
 
     const announcement = result.rows[0];
@@ -976,7 +985,8 @@ app.post('/api/announcements', requireAdmin, async (req, res) => {
         message: announcement.message,
         createdAt: announcement.created_at,
         startsAt: announcement.starts_at,
-        expiresAt: announcement.expires_at
+        expiresAt: announcement.expires_at,
+        imageUrl: announcement.image_url
       }
     });
   } catch (error) {
@@ -994,7 +1004,7 @@ app.get('/api/announcements', async (req, res) => {
 
     // Only return announcements that have started and haven't expired
     const result = await pool.query(`
-      SELECT a.id, a.message, a.created_at, a.starts_at, a.expires_at, u.username as created_by_username
+      SELECT a.id, a.message, a.created_at, a.starts_at, a.expires_at, a.image_url, u.username as created_by_username
       FROM announcements a
       LEFT JOIN users u ON a.created_by = u.id
       WHERE a.starts_at <= NOW()
@@ -1011,11 +1021,156 @@ app.get('/api/announcements', async (req, res) => {
         createdAt: row.created_at,
         startsAt: row.starts_at,
         expiresAt: row.expires_at,
+        imageUrl: row.image_url,
         createdBy: row.created_by_username
       }))
     });
   } catch (error) {
     console.error('Get announcements error:', error);
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+});
+
+// ============================================
+// Beacon Management Endpoints
+// ============================================
+
+// Admin: Set a user as the current beacon
+app.post('/api/beacon/set/:userId', requireAdmin, async (req, res) => {
+  try {
+    const userId = sanitizeInt(req.params.userId);
+    if (!userId) {
+      return res.status(400).json({ success: false, message: 'Invalid user ID' });
+    }
+
+    // Check if user exists
+    const userCheck = await pool.query('SELECT id, username FROM users WHERE id = $1', [userId]);
+    if (userCheck.rows.length === 0) {
+      return res.status(404).json({ success: false, message: 'User not found' });
+    }
+
+    // Clear all existing beacon assignments
+    await pool.query('UPDATE users SET is_current_beacon = FALSE');
+
+    // Set the new beacon user
+    await pool.query('UPDATE users SET is_current_beacon = TRUE WHERE id = $1', [userId]);
+
+    const user = userCheck.rows[0];
+    console.log(`Beacon assigned to user: ${user.username} (ID: ${userId})`);
+
+    res.json({
+      success: true,
+      message: `Beacon assigned to ${user.username}`,
+      beaconUser: {
+        id: user.id.toString(),
+        username: user.username
+      }
+    });
+  } catch (error) {
+    console.error('Set beacon error:', error);
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+});
+
+// Get current beacon user
+app.get('/api/beacon/current', async (req, res) => {
+  try {
+    const result = await pool.query(
+      'SELECT id, username FROM users WHERE is_current_beacon = TRUE LIMIT 1'
+    );
+
+    if (result.rows.length === 0) {
+      return res.json({
+        success: true,
+        beaconUser: null,
+        message: 'No beacon is currently assigned'
+      });
+    }
+
+    const user = result.rows[0];
+    res.json({
+      success: true,
+      beaconUser: {
+        id: user.id.toString(),
+        username: user.username
+      }
+    });
+  } catch (error) {
+    console.error('Get current beacon error:', error);
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+});
+
+// Check if current user is the beacon (requires auth)
+app.get('/api/beacon/status', requireAuth, async (req, res) => {
+  try {
+    const userId = req.user.userId;
+
+    const result = await pool.query(
+      'SELECT is_current_beacon FROM users WHERE id = $1',
+      [userId]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ success: false, message: 'User not found' });
+    }
+
+    res.json({
+      success: true,
+      isCurrentBeacon: result.rows[0].is_current_beacon || false
+    });
+  } catch (error) {
+    console.error('Get beacon status error:', error);
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+});
+
+// Admin: Clear current beacon (no one can beacon)
+app.post('/api/beacon/clear', requireAdmin, async (req, res) => {
+  try {
+    await pool.query('UPDATE users SET is_current_beacon = FALSE');
+
+    console.log('Beacon cleared - no active beacon');
+    res.json({
+      success: true,
+      message: 'Beacon cleared'
+    });
+  } catch (error) {
+    console.error('Clear beacon error:', error);
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+});
+
+// ============================================
+// Image Upload Endpoint
+// ============================================
+
+// Admin: Upload an image (stores as base64 data URL)
+// Note: For production, consider using cloud storage (S3, Cloudinary, etc.)
+app.post('/api/upload/image', requireAdmin, express.raw({ type: 'image/*', limit: '5mb' }), async (req, res) => {
+  try {
+    if (!req.body || req.body.length === 0) {
+      return res.status(400).json({ success: false, message: 'No image data provided' });
+    }
+
+    const contentType = req.headers['content-type'] || 'image/png';
+
+    // Validate content type
+    const allowedTypes = ['image/png', 'image/jpeg', 'image/jpg', 'image/gif', 'image/webp'];
+    if (!allowedTypes.includes(contentType)) {
+      return res.status(400).json({ success: false, message: 'Invalid image type. Allowed: PNG, JPEG, GIF, WebP' });
+    }
+
+    // Convert to base64 data URL
+    const base64 = req.body.toString('base64');
+    const imageUrl = `data:${contentType};base64,${base64}`;
+
+    res.json({
+      success: true,
+      imageUrl
+    });
+  } catch (error) {
+    console.error('Image upload error:', error);
     res.status(500).json({ success: false, message: 'Server error' });
   }
 });

@@ -4,10 +4,12 @@ import '../config/theme.dart';
 
 class BeaconIndicator extends StatefulWidget {
   final VoidCallback? onBeaconFired;
+  final bool enabled;
 
   const BeaconIndicator({
     super.key,
     this.onBeaconFired,
+    this.enabled = true,
   });
 
   @override
@@ -83,6 +85,9 @@ class _BeaconIndicatorState extends State<BeaconIndicator>
   }
 
   void _onPressStart() {
+    // Don't allow charging if beacon is disabled
+    if (!widget.enabled) return;
+
     // Stop any uncharge animation
     _releaseController.stop();
 
@@ -170,21 +175,27 @@ class _BeaconIndicatorState extends State<BeaconIndicator>
                     height: 56,
                     decoration: BoxDecoration(
                       shape: BoxShape.circle,
-                      color: _isCharged || _beaconFired
-                          ? AppTheme.primary
-                          : AppTheme.surface,
+                      color: !widget.enabled
+                          ? AppTheme.surface.withOpacity(0.5)
+                          : _isCharged || _beaconFired
+                              ? AppTheme.primary
+                              : AppTheme.surface,
                       border: Border.all(
-                        color: _isCharging || _beaconFired
-                            ? AppTheme.primary
-                            : AppTheme.textSecondary.withOpacity(AppTheme.subtleOpacity),
+                        color: !widget.enabled
+                            ? AppTheme.textMuted.withOpacity(0.3)
+                            : _isCharging || _beaconFired
+                                ? AppTheme.primary
+                                : AppTheme.textSecondary.withOpacity(AppTheme.subtleOpacity),
                         width: 1.5,
                       ),
                     ),
                     child: Icon(
                       Icons.wifi_tethering,
-                      color: _isCharged || _beaconFired
-                          ? Colors.white
-                          : AppTheme.textSecondary,
+                      color: !widget.enabled
+                          ? AppTheme.textMuted.withOpacity(0.4)
+                          : _isCharged || _beaconFired
+                              ? Colors.white
+                              : AppTheme.textSecondary,
                       size: 26,
                     ),
                   ),
@@ -198,22 +209,26 @@ class _BeaconIndicatorState extends State<BeaconIndicator>
                 fontSize: 11,
                 fontWeight: FontWeight.w500,
                 letterSpacing: 2,
-                color: _beaconFired
-                    ? AppTheme.primary
-                    : _isCharged
+                color: !widget.enabled
+                    ? AppTheme.textMuted.withOpacity(0.4)
+                    : _beaconFired
                         ? AppTheme.primary
-                        : _isCharging
-                            ? AppTheme.textSecondary
-                            : AppTheme.textMuted,
+                        : _isCharged
+                            ? AppTheme.primary
+                            : _isCharging
+                                ? AppTheme.textSecondary
+                                : AppTheme.textMuted,
               ),
               child: Text(
-                _beaconFired
-                    ? 'BEACON SENT'
-                    : _isCharged
-                        ? 'RELEASE TO SEND'
-                        : _isCharging
-                            ? 'CHARGING...'
-                            : 'HOLD TO BEACON',
+                !widget.enabled
+                    ? 'BEACON DISABLED'
+                    : _beaconFired
+                        ? 'BEACON SENT'
+                        : _isCharged
+                            ? 'RELEASE TO SEND'
+                            : _isCharging
+                                ? 'CHARGING...'
+                                : 'HOLD TO BEACON',
               ),
             ),
           ],

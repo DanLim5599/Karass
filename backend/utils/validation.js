@@ -29,9 +29,23 @@ function sanitizeInt(value) {
   return Number.isNaN(num) ? null : num;
 }
 
+/**
+ * Escape HTML special characters to prevent XSS
+ */
+function escapeHtml(str) {
+  if (typeof str !== 'string') return '';
+  return str
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#x27;');
+}
+
 module.exports = {
   isValidEmail,
   isValidUsername,
   isValidPassword,
-  sanitizeInt
+  sanitizeInt,
+  escapeHtml
 };

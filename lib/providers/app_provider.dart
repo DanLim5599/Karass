@@ -146,14 +146,40 @@ class AppProvider extends ChangeNotifier with WidgetsBindingObserver {
       return;
     }
 
-    // New flow: splash -> signUp -> waitingForBeacon -> unlocked
+    // New flow: splash -> landing -> (onboarding1 -> onboarding2 -> createAccount) or login -> waitingForBeacon -> unlocked
     if (!_storage.hasCompletedSignUp) {
-      _stage = AppStage.signUp;
+      _stage = AppStage.landing;
     } else if (!_storage.isUnlocked) {
       _stage = AppStage.waitingForBeacon;
     } else {
       _stage = AppStage.unlocked;
     }
+    notifyListeners();
+  }
+
+  // Navigation methods for new app flow
+  void goToLanding() {
+    _stage = AppStage.landing;
+    notifyListeners();
+  }
+
+  void goToOnboarding1() {
+    _stage = AppStage.onboarding1;
+    notifyListeners();
+  }
+
+  void goToOnboarding2() {
+    _stage = AppStage.onboarding2;
+    notifyListeners();
+  }
+
+  void goToCreateAccount() {
+    _stage = AppStage.createAccount;
+    notifyListeners();
+  }
+
+  void goToLogin() {
+    _stage = AppStage.login;
     notifyListeners();
   }
 
@@ -218,6 +244,9 @@ class AppProvider extends ChangeNotifier with WidgetsBindingObserver {
 
       await _haptic.mediumImpact();
 
+      // Check if user is the current beacon
+      await checkBeaconStatus();
+
       // After signup, go to waiting for beacon stage
       _stage = AppStage.waitingForBeacon;
       notifyListeners();
@@ -249,6 +278,9 @@ class AppProvider extends ChangeNotifier with WidgetsBindingObserver {
       await _storage.setHasCompletedSignUp(true);
 
       await _haptic.mediumImpact();
+
+      // Check if user is the current beacon
+      await checkBeaconStatus();
 
       // After login, go to waiting for beacon stage
       _stage = AppStage.waitingForBeacon;
@@ -282,6 +314,9 @@ class AppProvider extends ChangeNotifier with WidgetsBindingObserver {
 
       await _haptic.mediumImpact();
 
+      // Check if user is the current beacon
+      await checkBeaconStatus();
+
       // After Twitter login, go to waiting for beacon stage
       _stage = AppStage.waitingForBeacon;
       notifyListeners();
@@ -314,6 +349,9 @@ class AppProvider extends ChangeNotifier with WidgetsBindingObserver {
 
       await _haptic.mediumImpact();
 
+      // Check if user is the current beacon
+      await checkBeaconStatus();
+
       // After GitHub login, go to waiting for beacon stage
       _stage = AppStage.waitingForBeacon;
       notifyListeners();
@@ -335,8 +373,8 @@ class AppProvider extends ChangeNotifier with WidgetsBindingObserver {
     _userId = null;
     _announcements = [];
 
-    // Go back to signup screen
-    _stage = AppStage.signUp;
+    // Go back to landing screen
+    _stage = AppStage.landing;
 
     await _haptic.lightImpact();
     notifyListeners();
@@ -353,6 +391,7 @@ class AppProvider extends ChangeNotifier with WidgetsBindingObserver {
     required String message,
     DateTime? startsAt,
     DateTime? expiresAt,
+    String? imageUrl,
   }) async {
     if (!_userData.isAdmin) return false;
 
@@ -360,6 +399,7 @@ class AppProvider extends ChangeNotifier with WidgetsBindingObserver {
       message: message,
       startsAt: startsAt,
       expiresAt: expiresAt,
+      imageUrl: imageUrl,
     );
 
     if (success) {
@@ -390,8 +430,28 @@ class AppProvider extends ChangeNotifier with WidgetsBindingObserver {
     await _bluetooth.stopScanning();
   }
 
-  /// Toggle beaconing
+  /// Check if current user can beacon (is the designated beacon user)
+  bool get canBeacon => _userData.isCurrentBeacon;
+
+  /// Fetch beacon status from backend
+  Future<void> checkBeaconStatus() async {
+    if (_userId == null) return;
+    try {
+      final isCurrentBeacon = await _api.getBeaconStatus();
+      _userData = _userData.copyWith(isCurrentBeacon: isCurrentBeacon);
+      notifyListeners();
+    } catch (e) {
+      debugPrint('Failed to check beacon status: $e');
+    }
+  }
+
+  /// Toggle beaconing (only if user is the designated beacon)
   Future<void> toggleBeaconing() async {
+    if (!canBeacon) {
+      debugPrint('User is not authorized to beacon');
+      return;
+    }
+
     if (_beaconData.isBeaconing) {
       await _bluetooth.stopBeaconing();
       _beaconData = _beaconData.copyWith(isBeaconing: false);
@@ -403,8 +463,13 @@ class AppProvider extends ChangeNotifier with WidgetsBindingObserver {
     notifyListeners();
   }
 
-  /// Fire a single beacon pulse (charge-up mechanic)
+  /// Fire a single beacon pulse (charge-up mechanic) - only if authorized
   Future<void> fireBeacon() async {
+    if (!canBeacon) {
+      debugPrint('User is not authorized to beacon');
+      return;
+    }
+
     await _bluetooth.startBeaconing();
     await _haptic.heavyImpact();
 

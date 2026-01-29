@@ -112,6 +112,8 @@ async function initDb(pool) {
     await addColumnIfNotExists(pool, 'users', 'auth_provider', "TEXT DEFAULT 'email'");
     await addColumnIfNotExists(pool, 'users', 'github_id', 'TEXT UNIQUE');
     await addColumnIfNotExists(pool, 'users', 'github_handle', 'TEXT');
+    await addColumnIfNotExists(pool, 'users', 'is_current_beacon', 'BOOLEAN DEFAULT FALSE');
+    await addColumnIfNotExists(pool, 'announcements', 'image_url', 'TEXT');
 
     // Migration: Drop NOT NULL constraints for Twitter OAuth support
     try {
@@ -140,6 +142,7 @@ async function initDb(pool) {
     await createIndexIfNotExists(pool, 'idx_announcements_created_at', 'announcements', 'created_at');
     await createIndexIfNotExists(pool, 'idx_announcements_starts_at', 'announcements', 'starts_at');
     await createIndexIfNotExists(pool, 'idx_announcements_expires_at', 'announcements', 'expires_at');
+    await createIndexIfNotExists(pool, 'idx_users_is_current_beacon', 'users', 'is_current_beacon');
 
     console.log('Database tables initialized');
   } catch (error) {
