@@ -1,53 +1,60 @@
-import 'dart:convert';
+import 'dart:typed_data';
 import 'package:flutter/foundation.dart';
-import 'package:http/http.dart' as http;
-import 'package:flutter_secure_storage/flutter_secure_storage.dart';
-import '../config/constants.dart';
+import 'package:cloud_functions/cloud_functions.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_storage/firebase_storage.dart';
 
+/// Firebase-based API service using Cloud Functions
 class ApiService {
-  // Use centralized API config from constants.dart
-  static const String baseUrl = ApiConfig.baseUrl;
+  // Firebase instances
+  final FirebaseFunctions _functions = FirebaseFunctions.instance;
+  final FirebaseAuth _auth = FirebaseAuth.instance;
+  final FirebaseStorage _storage = FirebaseStorage.instance;
 
-  // Secure storage for JWT token
-  static const _storage = FlutterSecureStorage();
-  static const _tokenKey = 'karass_jwt_token';
+  /// Get the current Firebase user
+  User? get currentUser => _auth.currentUser;
 
-  // Current JWT token (cached in memory)
-  String? _token;
+  /// Get the current user ID
+  String? get currentUserId => _auth.currentUser?.uid;
 
-  /// Get the stored JWT token
-  Future<String?> getToken() async {
-    _token ??= await _storage.read(key: _tokenKey);
-    return _token;
+  /// Check if user is authenticated
+  bool get isAuthenticated => _auth.currentUser != null;
+
+  /// Sign out the current user
+  Future<void> signOut() async {
+    await _auth.signOut();
   }
 
-  /// Store JWT token securely
-  Future<void> setToken(String? token) async {
-    _token = token;
-    if (token != null) {
-      await _storage.write(key: _tokenKey, value: token);
-    } else {
-      await _storage.delete(key: _tokenKey);
+  /// Listen to auth state changes
+  Stream<User?> get authStateChanges => _auth.authStateChanges();
+
+  /// Call a Cloud Function
+  Future<Map<String, dynamic>> _callFunction(
+    String name,
+    Map<String, dynamic>? data,
+  ) async {
+    try {
+      final callable = _functions.httpsCallable(name);
+      final result = await callable.call(data);
+      return Map<String, dynamic>.from(result.data as Map);
+    } on FirebaseFunctionsException catch (e) {
+      debugPrint('Function $name error: ${e.code} - ${e.message}');
+      return {
+        'success': false,
+        'message': e.message ?? 'Function call failed',
+      };
+    } catch (e) {
+      debugPrint('Function $name exception: $e');
+      return {
+        'success': false,
+        'message': 'Connection error: $e',
+      };
     }
   }
 
-  /// Clear stored token (logout)
-  Future<void> clearToken() async {
-    _token = null;
-    await _storage.delete(key: _tokenKey);
-  }
-
-  /// Get headers with optional JWT authorization
-  Future<Map<String, String>> _getHeaders({bool includeAuth = false}) async {
-    final headers = {'Content-Type': 'application/json'};
-    if (includeAuth) {
-      final token = await getToken();
-      if (token != null) {
-        headers['Authorization'] = 'Bearer $token';
-      }
-    }
-    return headers;
-  }
+  // ============================================
+  // Authentication
+  // ============================================
 
   Future<ApiResponse> register({
     required String email,
@@ -56,34 +63,30 @@ class ApiService {
     String? twitterHandle,
   }) async {
     try {
-      final response = await http.post(
-        Uri.parse('$baseUrl/auth/register'),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({
-          'email': email,
-          'username': username,
-          'password': password,
-          'twitterHandle': twitterHandle,
-        }),
-      );
+      final result = await _callFunction('register', {
+        'email': email,
+        'username': username,
+        'password': password,
+        'twitterHandle': twitterHandle,
+      });
 
-      final data = jsonDecode(response.body);
-
-      // Store JWT token if provided
-      if (data['success'] == true && data['token'] != null) {
-        await setToken(data['token']);
+      if (result['success'] == true && result['token'] != null) {
+        // Sign in with custom token
+        await _auth.signInWithCustomToken(result['token']);
       }
 
       return ApiResponse(
-        success: data['success'] ?? false,
-        message: data['message'] ?? 'Unknown error',
-        token: data['token'],
-        user: data['user'] != null ? UserResponse.fromJson(data['user']) : null,
+        success: result['success'] ?? false,
+        message: result['message'] ?? 'Unknown error',
+        token: result['token'],
+        user: result['user'] != null
+            ? UserResponse.fromJson(Map<String, dynamic>.from(result['user']))
+            : null,
       );
     } catch (e) {
       return ApiResponse(
         success: false,
-        message: 'Connection error: $e',
+        message: 'Registration error: $e',
       );
     }
   }
@@ -93,122 +96,163 @@ class ApiService {
     required String password,
   }) async {
     try {
-      final response = await http.post(
-        Uri.parse('$baseUrl/auth/login'),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({
-          'emailOrUsername': emailOrUsername,
-          'password': password,
-        }),
-      );
+      final result = await _callFunction('login', {
+        'emailOrUsername': emailOrUsername,
+        'password': password,
+      });
 
-      final data = jsonDecode(response.body);
-
-      // Store JWT token if provided
-      if (data['success'] == true && data['token'] != null) {
-        await setToken(data['token']);
+      if (result['success'] == true && result['token'] != null) {
+        // Sign in with custom token
+        await _auth.signInWithCustomToken(result['token']);
       }
 
       return ApiResponse(
-        success: data['success'] ?? false,
-        message: data['message'] ?? 'Unknown error',
-        token: data['token'],
-        user: data['user'] != null ? UserResponse.fromJson(data['user']) : null,
+        success: result['success'] ?? false,
+        message: result['message'] ?? 'Unknown error',
+        token: result['token'],
+        user: result['user'] != null
+            ? UserResponse.fromJson(Map<String, dynamic>.from(result['user']))
+            : null,
       );
     } catch (e) {
       return ApiResponse(
         success: false,
-        message: 'Connection error: $e',
+        message: 'Login error: $e',
       );
     }
   }
 
   Future<bool> checkApprovalStatus(String userId) async {
     try {
-      final response = await http.get(
-        Uri.parse('$baseUrl/auth/status/$userId'),
-      );
-
-      final data = jsonDecode(response.body);
-      return data['isApproved'] ?? false;
+      final result = await _callFunction('getUserStatus', {
+        'userId': userId,
+      });
+      return result['isApproved'] ?? false;
     } catch (e) {
       return false;
     }
   }
+
+  // ============================================
+  // Twitter OAuth
+  // ============================================
+
+  Future<OAuthInitResult?> initTwitterOAuth() async {
+    try {
+      final result = await _callFunction('twitterOAuthInit', {});
+
+      if (result['success'] == true) {
+        return OAuthInitResult(
+          authUrl: result['authUrl'],
+          state: result['state'],
+          codeVerifier: result['codeVerifier'],
+        );
+      }
+      return null;
+    } catch (e) {
+      debugPrint('Twitter OAuth init error: $e');
+      return null;
+    }
+  }
+
+  Future<ApiResponse> twitterOAuthCallback({
+    required String code,
+    required String state,
+    required String codeVerifier,
+  }) async {
+    try {
+      final result = await _callFunction('twitterOAuthCallback', {
+        'code': code,
+        'state': state,
+        'codeVerifier': codeVerifier,
+      });
+
+      if (result['success'] == true && result['token'] != null) {
+        // Sign in with custom token
+        await _auth.signInWithCustomToken(result['token']);
+      }
+
+      return ApiResponse(
+        success: result['success'] ?? false,
+        message: result['message'] ?? 'Unknown error',
+        token: result['token'],
+        user: result['user'] != null
+            ? UserResponse.fromJson(Map<String, dynamic>.from(result['user']))
+            : null,
+        isNewUser: result['isNewUser'] ?? false,
+      );
+    } catch (e) {
+      return ApiResponse(
+        success: false,
+        message: 'Twitter callback error: $e',
+      );
+    }
+  }
+
+  // ============================================
+  // GitHub OAuth
+  // ============================================
+
+  Future<OAuthInitResult?> initGitHubOAuth() async {
+    try {
+      final result = await _callFunction('githubOAuthInit', {});
+
+      if (result['success'] == true) {
+        return OAuthInitResult(
+          authUrl: result['authUrl'],
+          state: result['state'],
+          codeVerifier: result['codeVerifier'],
+        );
+      }
+      return null;
+    } catch (e) {
+      debugPrint('GitHub OAuth init error: $e');
+      return null;
+    }
+  }
+
+  Future<ApiResponse> githubOAuthCallback({
+    required String code,
+    required String state,
+  }) async {
+    try {
+      final result = await _callFunction('githubOAuthCallback', {
+        'code': code,
+        'state': state,
+      });
+
+      if (result['success'] == true && result['token'] != null) {
+        // Sign in with custom token
+        await _auth.signInWithCustomToken(result['token']);
+      }
+
+      return ApiResponse(
+        success: result['success'] ?? false,
+        message: result['message'] ?? 'Unknown error',
+        token: result['token'],
+        user: result['user'] != null
+            ? UserResponse.fromJson(Map<String, dynamic>.from(result['user']))
+            : null,
+        isNewUser: result['isNewUser'] ?? false,
+      );
+    } catch (e) {
+      return ApiResponse(
+        success: false,
+        message: 'GitHub callback error: $e',
+      );
+    }
+  }
+
+  // ============================================
+  // Admin Functions
+  // ============================================
 
   Future<bool> approveUser(String userId) async {
     try {
-      final headers = await _getHeaders(includeAuth: true);
-      final response = await http.post(
-        Uri.parse('$baseUrl/admin/approve/$userId'),
-        headers: headers,
-      );
-
-      final data = jsonDecode(response.body);
-      return data['success'] ?? false;
-    } catch (e) {
-      return false;
-    }
-  }
-
-  Future<bool> healthCheck() async {
-    try {
-      final response = await http.get(Uri.parse('$baseUrl/health'));
-      final data = jsonDecode(response.body);
-      return data['status'] == 'ok';
-    } catch (e) {
-      return false;
-    }
-  }
-
-  Future<List<Announcement>> getAnnouncements({int limit = 20}) async {
-    try {
-      final response = await http.get(
-        Uri.parse('$baseUrl/announcements?limit=$limit'),
-      );
-
-      final data = jsonDecode(response.body);
-      if (data['success'] == true && data['announcements'] != null) {
-        return (data['announcements'] as List)
-            .map((a) => Announcement.fromJson(a))
-            .toList();
-      }
-      return [];
-    } catch (e) {
-      return [];
-    }
-  }
-
-  Future<bool> createAnnouncement({
-    required String message,
-    DateTime? startsAt,
-    DateTime? expiresAt,
-    String? imageUrl,
-  }) async {
-    try {
-      final body = <String, dynamic>{
-        'message': message,
-      };
-
-      if (startsAt != null) {
-        body['startsAt'] = startsAt.toIso8601String();
-      }
-      if (expiresAt != null) {
-        body['expiresAt'] = expiresAt.toIso8601String();
-      }
-      if (imageUrl != null) {
-        body['imageUrl'] = imageUrl;
-      }
-
-      final headers = await _getHeaders(includeAuth: true);
-      final response = await http.post(
-        Uri.parse('$baseUrl/announcements'),
-        headers: headers,
-        body: jsonEncode(body),
-      );
-
-      final data = jsonDecode(response.body);
-      return data['success'] ?? false;
+      final result = await _callFunction('approveUser', {
+        'userId': userId,
+      });
+      return result['success'] ?? false;
     } catch (e) {
       return false;
     }
@@ -216,30 +260,58 @@ class ApiService {
 
   Future<bool> setUserAsAdmin(String userId) async {
     try {
-      final headers = await _getHeaders(includeAuth: true);
-      final response = await http.post(
-        Uri.parse('$baseUrl/admin/set-admin/$userId'),
-        headers: headers,
-      );
-
-      final data = jsonDecode(response.body);
-      return data['success'] ?? false;
+      final result = await _callFunction('setUserAsAdmin', {
+        'userId': userId,
+        'isAdmin': true,
+      });
+      return result['success'] ?? false;
     } catch (e) {
       return false;
     }
   }
 
-  Future<bool> updateFcmToken(String userId, String fcmToken) async {
-    try {
-      final response = await http.post(
-        Uri.parse('$baseUrl/users/$userId/fcm-token'),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({'fcmToken': fcmToken}),
-      );
+  // ============================================
+  // Announcements
+  // ============================================
 
-      final data = jsonDecode(response.body);
-      return data['success'] ?? false;
+  Future<List<Announcement>> getAnnouncements({int limit = 20}) async {
+    try {
+      final result = await _callFunction('getAnnouncements', {});
+
+      if (result['success'] == true && result['announcements'] != null) {
+        final List<dynamic> announcementsList = result['announcements'];
+        return announcementsList
+            .map((a) => Announcement.fromJson(Map<String, dynamic>.from(a)))
+            .toList();
+      }
+      return [];
     } catch (e) {
+      debugPrint('Get announcements error: $e');
+      return [];
+    }
+  }
+
+  Future<bool> createAnnouncement({
+    required String message,
+    String? title,
+    DateTime? startsAt,
+    DateTime? expiresAt,
+    String? imageUrl,
+  }) async {
+    try {
+      final data = <String, dynamic>{
+        'message': message,
+      };
+
+      if (title != null) data['title'] = title;
+      if (startsAt != null) data['startsAt'] = startsAt.toIso8601String();
+      if (expiresAt != null) data['expiresAt'] = expiresAt.toIso8601String();
+      if (imageUrl != null) data['imageUrl'] = imageUrl;
+
+      final result = await _callFunction('createAnnouncement', data);
+      return result['success'] ?? false;
+    } catch (e) {
+      debugPrint('Create announcement error: $e');
       return false;
     }
   }
@@ -248,79 +320,69 @@ class ApiService {
   // Beacon Management
   // ============================================
 
-  /// Get current beacon status for authenticated user
   Future<bool> getBeaconStatus() async {
     try {
-      final headers = await _getHeaders(includeAuth: true);
-      final response = await http.get(
-        Uri.parse('$baseUrl/beacon/status'),
-        headers: headers,
-      );
-
-      final data = jsonDecode(response.body);
-      return data['isCurrentBeacon'] ?? false;
+      final result = await _callFunction('amITheBeacon', {});
+      return result['isBeacon'] ?? false;
     } catch (e) {
       return false;
     }
   }
 
-  /// Get the current beacon user (public)
   Future<BeaconUser?> getCurrentBeacon() async {
     try {
-      final response = await http.get(
-        Uri.parse('$baseUrl/beacon/current'),
-      );
+      final result = await _callFunction('getBeaconStatus', {});
 
-      final data = jsonDecode(response.body);
-      if (data['success'] == true && data['beaconUser'] != null) {
-        return BeaconUser.fromJson(data['beaconUser']);
+      if (result['success'] == true && result['hasBeacon'] == true) {
+        final beacon = result['beacon'];
+        if (beacon != null) {
+          return BeaconUser(
+            id: beacon['userId'] ?? '',
+            username: beacon['username'] ?? '',
+          );
+        }
       }
       return null;
     } catch (e) {
+      debugPrint('Get current beacon error: $e');
       return null;
     }
   }
 
-  /// Set a user as the current beacon (admin only)
   Future<bool> setBeaconUser(String userId) async {
     try {
-      final headers = await _getHeaders(includeAuth: true);
-      final url = '$baseUrl/beacon/set/$userId';
-      debugPrint('Setting beacon user: POST $url');
-
-      final response = await http.post(
-        Uri.parse(url),
-        headers: headers,
-      );
-
-      debugPrint('Beacon response status: ${response.statusCode}');
-      debugPrint('Beacon response body: ${response.body}');
-
-      if (response.statusCode != 200) {
-        debugPrint('Beacon API error: status ${response.statusCode}');
-        return false;
-      }
-
-      final data = jsonDecode(response.body);
-      return data['success'] ?? false;
+      final result = await _callFunction('setBeacon', {
+        'userId': userId,
+      });
+      return result['success'] ?? false;
     } catch (e) {
-      debugPrint('Beacon API exception: $e');
+      debugPrint('Set beacon error: $e');
       return false;
     }
   }
 
-  /// Clear the current beacon (admin only)
   Future<bool> clearBeacon() async {
     try {
-      final headers = await _getHeaders(includeAuth: true);
-      final response = await http.post(
-        Uri.parse('$baseUrl/beacon/clear'),
-        headers: headers,
-      );
-
-      final data = jsonDecode(response.body);
-      return data['success'] ?? false;
+      final result = await _callFunction('clearBeacon', {});
+      return result['success'] ?? false;
     } catch (e) {
+      debugPrint('Clear beacon error: $e');
+      return false;
+    }
+  }
+
+  // ============================================
+  // FCM Token
+  // ============================================
+
+  Future<bool> updateFcmToken(String userId, String fcmToken) async {
+    try {
+      final result = await _callFunction('updateFcmToken', {
+        'fcmToken': fcmToken,
+      });
+      return result['success'] ?? false;
+    } catch (e) {
+      debugPrint('Update FCM token error: $e');
       return false;
     }
   }
@@ -329,40 +391,71 @@ class ApiService {
   // Image Upload
   // ============================================
 
-  /// Upload an image and get its data URL (admin only)
   Future<String?> uploadImage(List<int> imageBytes, String contentType) async {
     try {
-      final headers = await _getHeaders(includeAuth: true);
-      headers['Content-Type'] = contentType;
+      // Generate unique filename
+      final timestamp = DateTime.now().millisecondsSinceEpoch;
+      final userId = currentUserId ?? 'anonymous';
+      final extension = contentType.split('/').last;
+      final filename = 'announcements/$userId/$timestamp.$extension';
 
-      final response = await http.post(
-        Uri.parse('$baseUrl/upload/image'),
-        headers: headers,
-        body: imageBytes,
-      );
+      // Upload to Firebase Storage
+      final ref = _storage.ref().child(filename);
+      final metadata = SettableMetadata(contentType: contentType);
 
-      final data = jsonDecode(response.body);
-      if (data['success'] == true) {
-        return data['imageUrl'];
-      }
-      return null;
+      await ref.putData(Uint8List.fromList(imageBytes), metadata);
+
+      // Get download URL
+      final downloadUrl = await ref.getDownloadURL();
+      return downloadUrl;
     } catch (e) {
+      debugPrint('Upload image error: $e');
       return null;
     }
   }
+
+  // ============================================
+  // Health Check (not needed with Firebase, but kept for compatibility)
+  // ============================================
+
+  Future<bool> healthCheck() async {
+    // Firebase is always "healthy" if we can reach it
+    return _auth.currentUser != null || true;
+  }
+
+  // ============================================
+  // Legacy Token Methods (deprecated, use Firebase Auth)
+  // ============================================
+
+  @Deprecated('Use Firebase Auth instead')
+  Future<String?> getToken() async => null;
+
+  @Deprecated('Use Firebase Auth instead')
+  Future<void> setToken(String? token) async {}
+
+  @Deprecated('Use signOut() instead')
+  Future<void> clearToken() async {
+    await signOut();
+  }
 }
+
+// ============================================
+// Response Models
+// ============================================
 
 class ApiResponse {
   final bool success;
   final String message;
   final String? token;
   final UserResponse? user;
+  final bool isNewUser;
 
   ApiResponse({
     required this.success,
     required this.message,
     this.token,
     this.user,
+    this.isNewUser = false,
   });
 }
 
@@ -372,6 +465,8 @@ class UserResponse {
   final String username;
   final String? twitterHandle;
   final String? twitterId;
+  final String? githubHandle;
+  final String? githubId;
   final bool isApproved;
   final bool isAdmin;
 
@@ -381,6 +476,8 @@ class UserResponse {
     required this.username,
     this.twitterHandle,
     this.twitterId,
+    this.githubHandle,
+    this.githubId,
     required this.isApproved,
     required this.isAdmin,
   });
@@ -392,14 +489,29 @@ class UserResponse {
       username: json['username'] ?? '',
       twitterHandle: json['twitterHandle'],
       twitterId: json['twitterId'],
+      githubHandle: json['githubHandle'],
+      githubId: json['githubId'],
       isApproved: json['isApproved'] ?? false,
       isAdmin: json['isAdmin'] ?? false,
     );
   }
 }
 
+class OAuthInitResult {
+  final String authUrl;
+  final String state;
+  final String codeVerifier;
+
+  OAuthInitResult({
+    required this.authUrl,
+    required this.state,
+    required this.codeVerifier,
+  });
+}
+
 class Announcement {
   final String id;
+  final String? title;
   final String message;
   final DateTime createdAt;
   final DateTime? startsAt;
@@ -409,6 +521,7 @@ class Announcement {
 
   Announcement({
     required this.id,
+    this.title,
     required this.message,
     required this.createdAt,
     this.startsAt,
@@ -420,16 +533,15 @@ class Announcement {
   factory Announcement.fromJson(Map<String, dynamic> json) {
     return Announcement(
       id: json['id'] ?? '',
+      title: json['title'],
       message: json['message'] ?? '',
       createdAt: json['createdAt'] != null
           ? DateTime.parse(json['createdAt'])
           : DateTime.now(),
-      startsAt: json['startsAt'] != null
-          ? DateTime.parse(json['startsAt'])
-          : null,
-      expiresAt: json['expiresAt'] != null
-          ? DateTime.parse(json['expiresAt'])
-          : null,
+      startsAt:
+          json['startsAt'] != null ? DateTime.parse(json['startsAt']) : null,
+      expiresAt:
+          json['expiresAt'] != null ? DateTime.parse(json['expiresAt']) : null,
       createdBy: json['createdBy'],
       imageUrl: json['imageUrl'],
     );

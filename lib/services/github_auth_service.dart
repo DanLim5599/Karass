@@ -63,19 +63,22 @@ class GitHubUserResponse {
   }
 }
 
-/// Service to handle GitHub OAuth authentication
+/// Service to handle GitHub OAuth authentication using Firebase Cloud Functions
 class GitHubAuthService extends BaseOAuthService {
   @override
   String get providerName => 'GITHUB';
 
   @override
-  String get initEndpoint => '/auth/github/init';
+  String get initFunctionName => 'githubOAuthInit';
 
   @override
-  String get callbackEndpoint => '/auth/github/callback';
+  String get callbackFunctionName => 'githubOAuthCallback';
+
+  @override
+  bool get includeCodeVerifierInCallback => false; // GitHub doesn't need codeVerifier
 
   /// Initiates the GitHub OAuth flow
-  /// Returns the authentication result with user data and JWT token
+  /// Returns the authentication result with user data and Firebase custom token
   Future<GitHubAuthResult> authenticate() async {
     final result = await performOAuthFlow();
     return GitHubAuthResult.fromOAuthResult(result);

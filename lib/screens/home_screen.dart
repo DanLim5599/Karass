@@ -8,6 +8,7 @@ import '../providers/app_provider.dart';
 import '../widgets/iridescent_orb_background.dart';
 import '../widgets/karass_logo.dart';
 import '../widgets/dust_text_animation.dart';
+import '../widgets/gradient_overlay.dart';
 import '../services/api_service.dart';
 import 'beacon_status_screen.dart';
 
@@ -130,9 +131,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     final appProvider = context.watch<AppProvider>();
 
     return Scaffold(
-      body: IridescentOrbBackground(
-        child: SafeArea(
-          child: Column(
+      body: GradientOverlay(
+        child: IridescentOrbBackground(
+          child: SafeArea(
+            child: Column(
             children: [
               // Top: Logo
               Padding(
@@ -259,6 +261,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                 ),
               ),
             ],
+          ),
           ),
         ),
       ),

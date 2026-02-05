@@ -62,10 +62,10 @@ class StorageKeys {
 }
 
 class ApiConfig {
-  // Backend API URL - change this for production
-  // Use your computer's local IP for physical device testing
-  static const String baseUrl = 'https://karass.onrender.com/api';
+  // Firebase project ID
+  static const String firebaseProjectId = 'karass-b41bc';
 
-  // Note: Admin operations now use JWT-based authentication
-  // The user's JWT token contains isAdmin claim which the backend verifies
+  // Note: API calls now use Firebase Cloud Functions
+  // Authentication uses Firebase Auth with custom tokens
+  // The user's Firebase custom claims contain isAdmin which the backend verifies
 }

@@ -63,19 +63,22 @@ class TwitterUserResponse {
   }
 }
 
-/// Service to handle Twitter/X OAuth authentication
+/// Service to handle Twitter/X OAuth authentication using Firebase Cloud Functions
 class TwitterAuthService extends BaseOAuthService {
   @override
   String get providerName => 'TWITTER';
 
   @override
-  String get initEndpoint => '/auth/twitter/init';
+  String get initFunctionName => 'twitterOAuthInit';
 
   @override
-  String get callbackEndpoint => '/auth/twitter/callback';
+  String get callbackFunctionName => 'twitterOAuthCallback';
+
+  @override
+  bool get includeCodeVerifierInCallback => true;
 
   /// Initiates the Twitter OAuth flow
-  /// Returns the authentication result with user data and JWT token
+  /// Returns the authentication result with user data and Firebase custom token
   Future<TwitterAuthResult> authenticate() async {
     final result = await performOAuthFlow();
     return TwitterAuthResult.fromOAuthResult(result);

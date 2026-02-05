@@ -4,6 +4,7 @@ import '../config/theme.dart';
 import '../providers/app_provider.dart';
 import '../widgets/iridescent_orb_background.dart';
 import '../widgets/karass_logo.dart';
+import '../widgets/gradient_overlay.dart';
 
 class CreateAccountScreen extends StatefulWidget {
   const CreateAccountScreen({super.key});
@@ -111,8 +112,9 @@ class _CreateAccountScreenState extends State<CreateAccountScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: IridescentOrbBackground(
-        child: SafeArea(
+      body: GradientOverlay(
+        child: IridescentOrbBackground(
+          child: SafeArea(
           child: SingleChildScrollView(
             padding: const EdgeInsets.all(24.0),
             child: Column(
@@ -126,6 +128,7 @@ class _CreateAccountScreenState extends State<CreateAccountScreen> {
               ],
             ),
           ),
+        ),
         ),
       ),
     );

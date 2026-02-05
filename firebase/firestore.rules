@@ -1,0 +1,119 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ============================================
+    // HELPER FUNCTIONS
+    // ============================================
+
+    // Check if user is authenticated
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    // Check if user is the document owner
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    // Check if user is admin (via custom claim)
+    function isAdmin() {
+      return isAuthenticated() && request.auth.token.isAdmin == true;
+    }
+
+    // Check if user is approved (via custom claim)
+    function isApproved() {
+      return isAuthenticated() && request.auth.token.isApproved == true;
+    }
+
+    // Validate string field
+    function isValidString(field, minLen, maxLen) {
+      return field is string && field.size() >= minLen && field.size() <= maxLen;
+    }
+
+    // Validate username format (alphanumeric + underscore, 3-30 chars)
+    function isValidUsername(username) {
+      return username.matches('^[a-zA-Z0-9_]{3,30}$');
+    }
+
+    // ============================================
+    // USERS COLLECTION
+    // ============================================
+
+    match /users/{userId} {
+      // Anyone authenticated can read user profiles (for displaying usernames, etc.)
+      allow read: if isAuthenticated();
+
+      // Users can only create their own document (during registration via Cloud Function)
+      // Direct creation is blocked - must go through Cloud Function
+      allow create: if false;
+
+      // Users can update specific fields on their own document
+      allow update: if isOwner(userId) && onlyUpdatingAllowedFields();
+
+      // No one can delete users directly
+      allow delete: if false;
+
+      // Helper: Fields users can update themselves
+      function onlyUpdatingAllowedFields() {
+        let allowedFields = ['fcmToken', 'twitterHandle', 'githubHandle'].toSet();
+        let changedFields = request.resource.data.diff(resource.data).affectedKeys();
+        return changedFields.hasOnly(allowedFields);
+      }
+    }
+
+    // ============================================
+    // USERNAMES COLLECTION (for unique username enforcement)
+    // ============================================
+
+    match /usernames/{username} {
+      // Anyone can check if a username exists
+      allow read: if true;
+
+      // Only Cloud Functions can write (to enforce uniqueness atomically)
+      allow write: if false;
+    }
+
+    // ============================================
+    // ANNOUNCEMENTS COLLECTION
+    // ============================================
+
+    match /announcements/{announcementId} {
+      // Anyone authenticated can read announcements
+      // Filter by startsAt/expiresAt done in query
+      allow read: if isAuthenticated();
+
+      // Only Cloud Functions can create/update/delete (admin operations)
+      allow create, update, delete: if false;
+    }
+
+    // ============================================
+    // APP CONFIG COLLECTION
+    // ============================================
+
+    match /app_config/{configId} {
+      // Anyone authenticated can read config (beacon status, etc.)
+      allow read: if isAuthenticated();
+
+      // Only Cloud Functions can write config
+      allow write: if false;
+    }
+
+    // ============================================
+    // OAUTH STATE COLLECTION (temporary PKCE storage)
+    // ============================================
+
+    match /oauth_state/{stateId} {
+      // Only Cloud Functions can read/write
+      allow read, write: if false;
+    }
+
+    // ============================================
+    // DENY ALL OTHER ACCESS
+    // ============================================
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

@@ -125,6 +125,9 @@ class AppProvider extends ChangeNotifier with WidgetsBindingObserver {
     );
 
     _isInitialized = true;
+
+    // Start at splash screen, let it transition to next stage after animation
+    // Don't call _updateStage here - splash screen will call onSplashComplete()
     notifyListeners();
   }
 
@@ -303,11 +306,7 @@ class AppProvider extends ChangeNotifier with WidgetsBindingObserver {
         isAdmin: result.user!.isAdmin,
       );
 
-      // Store the JWT token
-      if (result.token != null) {
-        await _api.setToken(result.token);
-      }
-
+      // Note: Firebase custom token sign-in is handled internally by the OAuth service
       await _storage.saveUserData(_userData);
       await _storage.setUserId(_userId);
       await _storage.setHasCompletedSignUp(true);
@@ -338,11 +337,7 @@ class AppProvider extends ChangeNotifier with WidgetsBindingObserver {
         isAdmin: result.user!.isAdmin,
       );
 
-      // Store the JWT token
-      if (result.token != null) {
-        await _api.setToken(result.token);
-      }
-
+      // Note: Firebase custom token sign-in is handled internally by the OAuth service
       await _storage.saveUserData(_userData);
       await _storage.setUserId(_userId);
       await _storage.setHasCompletedSignUp(true);
@@ -362,8 +357,12 @@ class AppProvider extends ChangeNotifier with WidgetsBindingObserver {
 
   /// Logout - clears all stored data and tokens
   Future<void> logout() async {
-    // Clear JWT token
-    await _api.clearToken();
+    // Sign out from Firebase Auth
+    try {
+      _api.signOut();
+    } catch (e) {
+      debugPrint('Sign out error: $e');
+    }
 
     // Clear local storage
     await _storage.clearAll();

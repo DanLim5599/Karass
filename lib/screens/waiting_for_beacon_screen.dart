@@ -5,6 +5,7 @@ import '../config/theme.dart';
 import '../providers/app_provider.dart';
 import '../widgets/iridescent_orb_background.dart';
 import '../widgets/karass_logo.dart';
+import '../widgets/gradient_overlay.dart';
 
 class WaitingForBeaconScreen extends StatefulWidget {
   const WaitingForBeaconScreen({super.key});
@@ -77,8 +78,9 @@ class _WaitingForBeaconScreenState extends State<WaitingForBeaconScreen>
     final appProvider = context.watch<AppProvider>();
 
     return Scaffold(
-      body: IridescentOrbBackground(
-        child: SafeArea(
+      body: GradientOverlay(
+        child: IridescentOrbBackground(
+          child: SafeArea(
           child: Padding(
             padding: const EdgeInsets.all(24.0),
             child: Column(
@@ -106,6 +108,7 @@ class _WaitingForBeaconScreenState extends State<WaitingForBeaconScreen>
               ],
             ),
           ),
+        ),
         ),
       ),
     );

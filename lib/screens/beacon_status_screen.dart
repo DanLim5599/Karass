@@ -5,6 +5,7 @@ import '../providers/app_provider.dart';
 import '../widgets/iridescent_orb_background.dart';
 import '../widgets/karass_logo.dart';
 import '../widgets/beacon_indicator.dart';
+import '../widgets/gradient_overlay.dart';
 
 class BeaconStatusScreen extends StatefulWidget {
   const BeaconStatusScreen({super.key});
@@ -29,9 +30,10 @@ class _BeaconStatusScreenState extends State<BeaconStatusScreen> {
     final isBeacon = appProvider.canBeacon;
 
     return Scaffold(
-      body: IridescentOrbBackground(
-        child: SafeArea(
-          child: Padding(
+      body: GradientOverlay(
+        child: IridescentOrbBackground(
+          child: SafeArea(
+            child: Padding(
             padding: const EdgeInsets.all(24.0),
             child: Column(
               children: [
@@ -103,6 +105,7 @@ class _BeaconStatusScreenState extends State<BeaconStatusScreen> {
                 const Spacer(),
               ],
             ),
+          ),
           ),
         ),
       ),

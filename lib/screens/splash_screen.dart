@@ -4,6 +4,7 @@ import '../config/constants.dart'; // For AnimationConfig
 import '../providers/app_provider.dart';
 import '../widgets/iridescent_orb_background.dart';
 import '../widgets/karass_logo.dart';
+import '../widgets/gradient_overlay.dart';
 
 class SplashScreen extends StatefulWidget {
   const SplashScreen({super.key});
@@ -60,8 +61,9 @@ class _SplashScreenState extends State<SplashScreen>
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: IridescentOrbBackground(
-        child: SafeArea(
+      body: GradientOverlay(
+        child: IridescentOrbBackground(
+          child: SafeArea(
           child: AnimatedBuilder(
             animation: _controller,
             builder: (context, child) {
@@ -87,6 +89,7 @@ class _SplashScreenState extends State<SplashScreen>
             },
           ),
         ),
+      ),
       ),
     );
   }
